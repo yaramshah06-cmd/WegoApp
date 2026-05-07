@@ -1,18 +1,16 @@
 import 'dart:async';
-import 'dart:math' as math;
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-
 import 'video_call_screen.dart';
 import 'voice_call_screen.dart';
-
+import 'app_localizations.dart';
+import 'app_translations.dart';
 class IncomingCallScreen extends StatefulWidget {
-  final String callId;       // Firestore doc ID (roomId)
+  final String callId;
   final String callerId;
   final String callerName;
   final String callerImage;
-  final String callType;     // 'voice' or 'video'
+  final String callType;
 
   const IncomingCallScreen({
     super.key,
@@ -29,28 +27,25 @@ class IncomingCallScreen extends StatefulWidget {
 
 class _IncomingCallScreenState extends State<IncomingCallScreen>
     with TickerProviderStateMixin {
-  // ── Animations ──
   late final AnimationController _pulseCtrl;
   late final AnimationController _rippleCtrl;
   late final Animation<double> _pulseAnim;
-
-  // ── Firestore listener ──
   StreamSubscription? _callSub;
+  bool _isProcessing = false;
 
   @override
   void initState() {
     super.initState();
 
-    // Pulse for avatar
     _pulseCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1200),
     )..repeat(reverse: true);
+
     _pulseAnim = Tween<double>(begin: 1.0, end: 1.08).animate(
       CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
     );
 
-    // Ripple rings
     _rippleCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 2000),
@@ -59,21 +54,32 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
     _listenForCallStatus();
   }
 
-  // ── Listen: if caller cancels ──
   void _listenForCallStatus() {
     _callSub = FirebaseFirestore.instance
         .collection('calls')
         .doc(widget.callId)
         .snapshots()
         .listen((snap) {
+      if (!mounted) return;
+
+      // ✅ Document delete ho gaya — dismiss karo
       if (!snap.exists) {
+        print('📵 Call document delete ho gaya');
         _dismiss();
         return;
       }
+
       final status = snap.data()?['status'] as String?;
-      if (status == 'ended' || status == 'cancelled') {
+      print('📞 Incoming screen status update: $status');
+
+      if (status == 'ended' ||
+          status == 'cancelled' ||
+          status == 'declined' ||
+          status == 'timeout') {
         _dismiss();
       }
+    }, onError: (e) {
+      print('💥 Call listener error: $e');
     });
   }
 
@@ -81,44 +87,74 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
     if (mounted) Navigator.of(context).pop();
   }
 
-  // ── Accept ──
   Future<void> _acceptCall() async {
-    await FirebaseFirestore.instance
-        .collection('calls')
-        .doc(widget.callId)
-        .update({'status': 'accepted'});
+    if (_isProcessing) return;
+    setState(() => _isProcessing = true);
+
+    _callSub?.cancel();
+    _callSub = null;
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('calls')
+          .doc(widget.callId)
+          .update({'status': 'accepted'});
+
+      print('✅ Call accepted: ${widget.callId}');
+    } catch (e) {
+      print('❌ Accept error: $e');
+      setState(() => _isProcessing = false);
+      return;
+    }
 
     if (!mounted) return;
 
-    if (widget.callType == 'video') {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => VideoCallScreen(
-            remoteUserId: widget.callerId,
-            remoteUserName: widget.callerName,
-            remoteUserImage: widget.callerImage,
-          ),
+    final isVideo = widget.callType.toLowerCase() == 'video';
+    print('📹 Call type: ${widget.callType} | isVideo: $isVideo');
+
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => isVideo
+            ? VideoCallScreen(
+          remoteUserId: widget.callerId,
+          remoteUserName: widget.callerName,
+          remoteUserImage: widget.callerImage,
+          roomId: widget.callId,
+        )
+            : VoiceCallScreen(
+          remoteUserId: widget.callerId,
+          remoteUserName: widget.callerName,
+          remoteUserImage: widget.callerImage,
+          roomId: widget.callId,
         ),
-      );
-    } else {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => VoiceCallScreen(
-            remoteUserId: widget.callerId,
-            remoteUserName: widget.callerName,
-            remoteUserImage: widget.callerImage,
-          ),
-        ),
-      );
-    }
+      ),
+    );
   }
 
-  // ── Decline ──
+  // ✅ FIXED — Decline pe document delete karo
   Future<void> _declineCall() async {
-    await FirebaseFirestore.instance
-        .collection('calls')
-        .doc(widget.callId)
-        .update({'status': 'declined'});
+    if (_isProcessing) return;
+    setState(() => _isProcessing = true);
+
+    _callSub?.cancel();
+    _callSub = null;
+
+    try {
+      final callRef = FirebaseFirestore.instance
+          .collection('calls')
+          .doc(widget.callId);
+
+      // Pehle declined mark karo — caller ko pata chale
+      await callRef.update({'status': 'declined'});
+      print('📵 Call declined: ${widget.callId}');
+
+      // ✅ Thodi delay ke baad delete karo — dobara call aa sake
+      await Future.delayed(const Duration(seconds: 1));
+      await callRef.delete();
+      print('🗑️ Call document deleted after decline');
+    } catch (e) {
+      print('❌ Decline error: $e');
+    }
 
     if (mounted) Navigator.of(context).pop();
   }
@@ -131,7 +167,6 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
     super.dispose();
   }
 
-  // ── Build ──
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -141,14 +176,18 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
           Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(
-                colors: [Color(0xFF8B1A4A), Color(0xFF3D0B1F), Color(0xFF1A0510)],
+                colors: [
+                  Color(0xFF8B1A4A),
+                  Color(0xFF3D0B1F),
+                  Color(0xFF1A0510),
+                ],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
             ),
           ),
 
-          // ── Decorative blurred circles ──
+          // ── Decorative circles ──
           Positioned(
             top: -80,
             right: -60,
@@ -182,8 +221,8 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
 
                 // ── Call type label ──
                 Container(
-                  padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 6),
                   decoration: BoxDecoration(
                     color: Colors.white.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(20),
@@ -192,7 +231,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
-                        widget.callType == 'video'
+                        widget.callType.toLowerCase() == 'video'
                             ? Icons.videocam_rounded
                             : Icons.call_rounded,
                         color: Colors.white70,
@@ -200,7 +239,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        widget.callType == 'video'
+                        widget.callType.toLowerCase() == 'video'
                             ? 'Incoming Video Call'
                             : 'Incoming Voice Call',
                         style: const TextStyle(
@@ -222,7 +261,6 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
-                      // Ripple rings
                       ...List.generate(3, (i) {
                         return AnimatedBuilder(
                           animation: _rippleCtrl,
@@ -241,7 +279,8 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
                                   border: Border.all(
-                                    color: Colors.pinkAccent.withOpacity(0.6),
+                                    color:
+                                    Colors.pinkAccent.withOpacity(0.6),
                                     width: 1.5,
                                   ),
                                 ),
@@ -250,8 +289,6 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
                           },
                         );
                       }),
-
-                      // Pulsing avatar
                       ScaleTransition(
                         scale: _pulseAnim,
                         child: Container(
@@ -265,32 +302,22 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
                             ),
                             boxShadow: [
                               BoxShadow(
-                                color: const Color(0xFF8B1A4A).withOpacity(0.5),
+                                color: const Color(0xFF8B1A4A)
+                                    .withOpacity(0.5),
                                 blurRadius: 30,
                                 spreadRadius: 5,
                               ),
                             ],
                           ),
                           child: ClipOval(
-                            child: Image.network(
+                            child: widget.callerImage.isNotEmpty
+                                ? Image.network(
                               widget.callerImage,
                               fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Container(
-                                color: const Color(0xFF8B1A4A),
-                                child: Center(
-                                  child: Text(
-                                    widget.callerName.isNotEmpty
-                                        ? widget.callerName[0].toUpperCase()
-                                        : '?',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 40,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
+                              errorBuilder: (_, __, ___) =>
+                                  _buildInitialAvatar(),
+                            )
+                                : _buildInitialAvatar(),
                           ),
                         ),
                       ),
@@ -314,11 +341,10 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
 
                 const SizedBox(height: 10),
 
-                // ── Status text (animated dots) ──
                 _AnimatedStatus(
-                  label: widget.callType == 'video'
-                      ? 'Video call aa rahi hai'
-                      : 'Voice call aa rahi hai',
+                  label: widget.callType.toLowerCase() == 'video'
+                      ? 'Incoming video call'
+                      : 'Incoming voice call',
                 ),
 
                 const Spacer(flex: 3),
@@ -329,22 +355,19 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      // Decline
                       _CallButton(
                         icon: Icons.call_end_rounded,
                         color: const Color(0xFFE53935),
                         label: 'Decline',
-                        onTap: _declineCall,
+                        onTap: _isProcessing ? () {} : _declineCall,
                       ),
-
-                      // Accept
                       _CallButton(
-                        icon: widget.callType == 'video'
+                        icon: widget.callType.toLowerCase() == 'video'
                             ? Icons.videocam_rounded
                             : Icons.call_rounded,
                         color: const Color(0xFF43A047),
                         label: 'Accept',
-                        onTap: _acceptCall,
+                        onTap: _isProcessing ? () {} : _acceptCall,
                       ),
                     ],
                   ),
@@ -358,11 +381,27 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
       ),
     );
   }
+
+  Widget _buildInitialAvatar() {
+    return Container(
+      color: const Color(0xFF8B1A4A),
+      child: Center(
+        child: Text(
+          widget.callerName.isNotEmpty
+              ? widget.callerName[0].toUpperCase()
+              : '?',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 40,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
 }
 
-// ─────────────────────────────────────
-// Animated "..." status text
-// ─────────────────────────────────────
+// ── Animated dots status ──
 class _AnimatedStatus extends StatefulWidget {
   final String label;
   const _AnimatedStatus({required this.label});
@@ -378,10 +417,9 @@ class _AnimatedStatusState extends State<_AnimatedStatus> {
   @override
   void initState() {
     super.initState();
-    _timer =
-        Timer.periodic(const Duration(milliseconds: 500), (_) {
-          if (mounted) setState(() => _dotCount = (_dotCount % 3) + 1);
-        });
+    _timer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      if (mounted) setState(() => _dotCount = (_dotCount % 3) + 1);
+    });
   }
 
   @override
@@ -403,9 +441,7 @@ class _AnimatedStatusState extends State<_AnimatedStatus> {
   }
 }
 
-// ─────────────────────────────────────
-// Call Button (Accept / Decline)
-// ─────────────────────────────────────
+// ── Call Button ──
 class _CallButton extends StatefulWidget {
   final IconData icon;
   final Color color;

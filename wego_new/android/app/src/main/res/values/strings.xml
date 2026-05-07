@@ -1,5 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="app_name">WeGo Marriage</string>
+
+    <!-- Facebook App ID -->
     <string name="facebook_app_id">1694573471717063</string>
+    <string name="fb_login_protocol_scheme">fb1694573471717063</string>
+
+    <!-- Facebook Client Token -->
     <string name="facebook_client_token">283cf6c3e7af5ddcba45c6859b7beaa1</string>
+
+    <!-- Google Web Client ID -->
+    <string name="google_web_client_id">800398940290-4amtkl1ogm6p4kejfb09tm6u4if60uej.apps.googleusercontent.com</string>
+
+    <!-- ✅ Yeh line add ki — Google Sign In plugin isko automatically read karta hai -->
+    <string name="default_web_client_id">800398940290-4amtkl1ogm6p4kejfb09tm6u4if60uej.apps.googleusercontent.com</string>
+
 </resources>

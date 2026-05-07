@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
-
+import 'app_localizations.dart';
+import 'app_translations.dart';
 class GalleryMultiSelectScreen extends StatefulWidget {
   const GalleryMultiSelectScreen({super.key});
 

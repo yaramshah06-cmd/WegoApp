@@ -31,9 +31,12 @@ class WebRTCService {
   String? _roomId;
   String? _localUserId;
 
+  // ✅ callId track karo — call document delete ke liye
+  String? _callId;
+
   final List<StreamSubscription> _subscriptions = [];
 
-  // ✅ APNA TURN SERVER — connecting stuck problem fix
+  // ✅ TURN SERVER CONFIG
   final Map<String, dynamic> _iceConfig = {
     'iceServers': [
       {'urls': 'stun:stun.l.google.com:19302'},
@@ -90,7 +93,13 @@ class WebRTCService {
   // ─────────────────────────────
   // ✅ CREATE OR JOIN ROOM
   // ─────────────────────────────
-  Future<void> createOrJoinRoom(String roomId, String userId) async {
+  Future<void> createOrJoinRoom(
+      String roomId,
+      String userId, {
+        String? callId,
+      }) async {
+    _callId = callId ?? roomId;
+
     await _firestore.collection('rooms').doc(roomId).set({
       'createdAt': FieldValue.serverTimestamp(),
       'roomId': roomId,
@@ -224,12 +233,17 @@ class WebRTCService {
   // ─────────────────────────────
   // OFFER / ANSWER
   // ─────────────────────────────
+
+  // ✅ FIX 1: Video hai ya nahi dynamically check karo
   Future<void> _createOffer(String remoteId) async {
     final pc = await _getOrCreatePeerConnection(remoteId);
 
+    final hasVideo = _localStream != null &&
+        _localStream!.getVideoTracks().isNotEmpty;
+
     final offer = await pc.createOffer({
       'offerToReceiveAudio': true,
-      'offerToReceiveVideo': true,
+      'offerToReceiveVideo': hasVideo, // ✅ Voice call mein false hoga
     });
     await pc.setLocalDescription(offer);
 
@@ -239,6 +253,7 @@ class WebRTCService {
     });
   }
 
+  // ✅ FIX 2: Answer mein bhi video dynamically check karo
   Future<void> _handleOffer(String remoteId, String sdp) async {
     final pc = await _getOrCreatePeerConnection(remoteId);
 
@@ -246,9 +261,12 @@ class WebRTCService {
       RTCSessionDescription(sdp, 'offer'),
     );
 
+    final hasVideo = _localStream != null &&
+        _localStream!.getVideoTracks().isNotEmpty;
+
     final answer = await pc.createAnswer({
       'offerToReceiveAudio': true,
-      'offerToReceiveVideo': true,
+      'offerToReceiveVideo': hasVideo, // ✅ Voice call mein false hoga
     });
     await pc.setLocalDescription(answer);
 
@@ -258,9 +276,17 @@ class WebRTCService {
     });
   }
 
+  // ✅ FIX 3: Wrong state error fix — state check karo pehle
   Future<void> _handleAnswer(String remoteId, String sdp) async {
     final pc = _peerConnections[remoteId];
     if (pc == null) return;
+
+    // ✅ Sirf tab set karo jab state sahi ho
+    final state = await pc.getSignalingState();
+    if (state != RTCSignalingState.RTCSignalingStateHaveLocalOffer) {
+      print('⚠️ Answer ignore kiya — wrong state: $state');
+      return;
+    }
 
     await pc.setRemoteDescription(
       RTCSessionDescription(sdp, 'answer'),
@@ -342,25 +368,30 @@ class WebRTCService {
       _localStream?.getVideoTracks().firstOrNull?.enabled ?? false;
 
   // ─────────────────────────────
-  // LEAVE ROOM
+  // ✅ LEAVE ROOM — call doc bhi delete karo
   // ─────────────────────────────
   Future<void> leaveRoom() async {
+    // Subscriptions cancel karo
     for (final sub in _subscriptions) {
       await sub.cancel();
     }
     _subscriptions.clear();
 
+    // Peer connections band karo
     for (final id in _peerConnections.keys.toList()) {
       await _removePeer(id);
     }
 
+    // Local stream band karo
     _localStream?.getTracks().forEach((t) => t.stop());
     await _localStream?.dispose();
     _localStream = null;
 
+    // Renderers dispose karo
     await localRenderer.dispose();
     await remoteRenderer.dispose();
 
+    // Room se participant hata do
     if (_roomId != null && _localUserId != null) {
       await _firestore
           .collection('rooms')
@@ -370,7 +401,39 @@ class WebRTCService {
           .delete();
     }
 
+    // ✅ CALLS DOCUMENT DELETE KARO — dobara call aa sake
+    if (_callId != null) {
+      try {
+        final callRef = _firestore.collection('calls').doc(_callId);
+
+        // Pehle ended mark karo
+        await callRef.update({'status': 'ended'});
+
+        // 1 second baad delete karo
+        await Future.delayed(const Duration(seconds: 1));
+        await callRef.delete();
+
+        // ✅ Subcollections bhi clean karo
+        final callerCands =
+        await callRef.collection('callerCandidates').get();
+        for (final doc in callerCands.docs) {
+          await doc.reference.delete();
+        }
+
+        final calleeCands =
+        await callRef.collection('calleeCandidates').get();
+        for (final doc in calleeCands.docs) {
+          await doc.reference.delete();
+        }
+
+        print('🗑️ Call document delete ho gaya: $_callId');
+      } catch (e) {
+        print('❌ Call delete error: $e');
+      }
+    }
+
     _roomId = null;
     _localUserId = null;
+    _callId = null;
   }
 }

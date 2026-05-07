@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:wego_marriage/providers/settings_provider.dart';
+import 'app_translations.dart';
 
 class NotificationSettingScreen extends StatefulWidget {
   const NotificationSettingScreen({super.key});
@@ -17,6 +18,7 @@ class _NotificationSettingScreenState
     final settings = context.watch<SettingsProvider>();
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
     final textColor = isDarkMode ? Colors.white : const Color(0xFF1A1A2E);
+    final lang = Localizations.localeOf(context).languageCode;
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
@@ -32,9 +34,9 @@ class _NotificationSettingScreenState
           onPressed: () => Navigator.pop(context),
         ),
         centerTitle: true,
-        title: const Text(
-          'Notification Setting',
-          style: TextStyle(
+        title: Text(
+          AppTranslations.translate('notification_setting', lang),
+          style: const TextStyle(
             color: Color(0xFF4169E1),
             fontSize: 18,
             fontWeight: FontWeight.w600,
@@ -46,49 +48,49 @@ class _NotificationSettingScreenState
         child: ListView(
           children: [
             _buildToggleItem(
-              label: 'General Notification',
+              label: AppTranslations.translate('general_notification', lang),
               value: settings.generalNotification,
               onChanged: (val) => settings.setGeneralNotification(val),
               textColor: textColor,
             ),
             _buildToggleItem(
-              label: 'Sound',
+              label: AppTranslations.translate('sound', lang),
               value: settings.sound,
               onChanged: (val) => settings.setSound(val),
               textColor: textColor,
             ),
             _buildToggleItem(
-              label: 'Sound Call',
+              label: AppTranslations.translate('sound_call', lang),
               value: settings.soundCall,
               onChanged: (val) => settings.setSoundCall(val),
               textColor: textColor,
             ),
             _buildToggleItem(
-              label: 'Vibrate',
+              label: AppTranslations.translate('vibrate', lang),
               value: settings.vibrate,
               onChanged: (val) => settings.setVibrate(val),
               textColor: textColor,
             ),
             _buildToggleItem(
-              label: 'Special Offers',
+              label: AppTranslations.translate('special_offers', lang),
               value: settings.specialOffers,
               onChanged: (val) => settings.setSpecialOffers(val),
               textColor: textColor,
             ),
             _buildToggleItem(
-              label: 'Payments',
+              label: AppTranslations.translate('payments', lang),
               value: settings.payments,
               onChanged: (val) => settings.setPayments(val),
               textColor: textColor,
             ),
             _buildToggleItem(
-              label: 'Promo And Discount',
+              label: AppTranslations.translate('promo_and_discount', lang),
               value: settings.promoAndDiscount,
               onChanged: (val) => settings.setPromoAndDiscount(val),
               textColor: textColor,
             ),
             _buildToggleItem(
-              label: 'Cashback',
+              label: AppTranslations.translate('cashback', lang),
               value: settings.cashback,
               onChanged: (val) => settings.setCashback(val),
               textColor: textColor,

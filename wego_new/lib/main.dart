@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'firebase_options.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart'; // ✅ ADD
 import 'package:provider/provider.dart';
 import 'package:wego_marriage/providers/story_provider.dart';
 import 'package:wego_marriage/providers/user_provider.dart';
@@ -11,18 +13,25 @@ import 'package:wego_marriage/providers/chat_provider.dart';
 import 'package:wego_marriage/screen/splash_screen.dart';
 import 'package:wego_marriage/screen/incoming_call_screen.dart';
 import 'package:wego_marriage/services/local_storage_service.dart';
-
-// ── Global navigator key (incoming call ke liye zaruri) ──
+import 'package:wego_marriage/services/message_badge_service.dart';
+import 'package:wego_marriage/screen/app_localizations.dart';
+import 'package:wego_marriage/screen/app_translations.dart';
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-
   await LocalStorageService().init();
+
+  FirebaseAuth.instance.authStateChanges().listen((user) {
+    if (user != null) {
+      MessageBadgeService.startListening();
+    } else {
+      MessageBadgeService.stopListening();
+    }
+  });
 
   runApp(
     MultiProvider(
@@ -45,8 +54,10 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  // Firestore incoming call listener
-  Stream<QuerySnapshot>? _callStream;
+  final Set<String> _shownCallIds = {};
+
+  StreamSubscription? _authSubscription;
+  StreamSubscription? _callSubscription;
 
   @override
   void initState() {
@@ -54,36 +65,96 @@ class _MyAppState extends State<MyApp> {
     _startCallListener();
   }
 
+  @override
+  void dispose() {
+    _authSubscription?.cancel();
+    _callSubscription?.cancel();
+    super.dispose();
+  }
+
   void _startCallListener() {
-    // Auth state change pe listener lagao
-    FirebaseAuth.instance.authStateChanges().listen((user) {
-      if (user == null) return;
+    print('🚀 Call listener shuru ho raha hai...');
 
-      // Jab bhi 'ringing' status aaye aur receiverId == currentUser
-      _callStream = FirebaseFirestore.instance
-          .collection('calls')
-          .where('receiverId', isEqualTo: user.uid)
-          .where('status', isEqualTo: 'ringing')
-          .snapshots();
+    _authSubscription =
+        FirebaseAuth.instance.authStateChanges().listen((user) {
+          _callSubscription?.cancel();
+          _callSubscription = null;
+          _shownCallIds.clear();
 
-      _callStream!.listen((snapshot) {
-        for (final change in snapshot.docChanges) {
-          if (change.type == DocumentChangeType.added) {
-            final data = change.doc.data() as Map<String, dynamic>;
-            final callId = change.doc.id;
-            final callerId = data['callerId'] as String? ?? '';
-            final callType = data['type'] as String? ?? 'voice';
-
-            // Caller info Firestore se fetch karo
-            _fetchCallerAndShowScreen(
-              callId: callId,
-              callerId: callerId,
-              callType: callType,
-            );
+          if (user == null) {
+            print('❌ User logged out hai');
+            return;
           }
-        }
-      });
-    });
+
+          print('✅ User logged in: ${user.uid}');
+
+          _callSubscription = FirebaseFirestore.instance
+              .collection('calls')
+              .where('receiverId', isEqualTo: user.uid)
+              .snapshots()
+              .listen((snapshot) {
+            for (final change in snapshot.docChanges) {
+              final data =
+                  change.doc.data() as Map<String, dynamic>? ?? {};
+              final status = data['status'] as String? ?? '';
+              final callId = change.doc.id;
+
+              print(
+                  '📄 Change: ${change.type} | callId: $callId | status: $status');
+
+              if (change.type == DocumentChangeType.added &&
+                  status == 'ringing') {
+                if (_shownCallIds.contains(callId)) {
+                  print('⚠️ Already shown: $callId');
+                  continue;
+                }
+
+                _shownCallIds.add(callId);
+
+                final callType = (data['callType'] as String? ??
+                    data['type'] as String? ??
+                    'voice');
+                final callerId = data['callerId'] as String? ?? '';
+
+                print(
+                    '📲 Call aa rahi hai! callId: $callId | type: $callType');
+
+                _fetchCallerAndShowScreen(
+                  callId: callId,
+                  callerId: callerId,
+                  callType: callType,
+                );
+              }
+
+              if (status == 'ended' ||
+                  status == 'declined' ||
+                  status == 'cancelled' ||
+                  status == 'timeout' ||
+                  change.type == DocumentChangeType.removed) {
+                print('🔕 Call khatam: $callId');
+                _shownCallIds.remove(callId);
+              }
+
+              if (change.type == DocumentChangeType.modified &&
+                  status == 'ringing') {
+                if (!_shownCallIds.contains(callId)) {
+                  _shownCallIds.add(callId);
+                  final callType = (data['callType'] as String? ??
+                      data['type'] as String? ??
+                      'voice');
+                  final callerId = data['callerId'] as String? ?? '';
+                  _fetchCallerAndShowScreen(
+                    callId: callId,
+                    callerId: callerId,
+                    callType: callType,
+                  );
+                }
+              }
+            }
+          }, onError: (e) {
+            print('💥 Call listener error: $e');
+          });
+        });
   }
 
   Future<void> _fetchCallerAndShowScreen({
@@ -91,39 +162,70 @@ class _MyAppState extends State<MyApp> {
     required String callerId,
     required String callType,
   }) async {
+    print('🔔 Screen show karne ki koshish: $callId');
+
     try {
-      // Call abhi bhi ringing hai? (double check)
+      await Future.delayed(const Duration(milliseconds: 500));
+
       final callDoc = await FirebaseFirestore.instance
           .collection('calls')
           .doc(callId)
           .get();
 
-      if (!callDoc.exists) return;
-      final status = callDoc.data()?['status'] as String?;
-      if (status != 'ringing') return;
+      if (!callDoc.exists) {
+        print('❌ Call doc exist nahi');
+        _shownCallIds.remove(callId);
+        return;
+      }
 
-      // Caller ki info fetch karo
+      final status = callDoc.data()?['status'] as String?;
+
+      if (status != 'ringing') {
+        print('⚠️ Status ringing nahi ($status) — skip');
+        _shownCallIds.remove(callId);
+        return;
+      }
+
       final userDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(callerId)
           .get();
 
-      if (!userDoc.exists) return;
+      String callerName = 'Unknown';
+      String callerImage = '';
 
-      final userData = userDoc.data() as Map<String, dynamic>;
-      final callerName = userData['name'] as String? ??
-          userData['displayName'] as String? ??
-          'Unknown';
-      final callerImage = userData['photoUrl'] as String? ??
-          userData['profileImage'] as String? ??
-          '';
+      if (userDoc.exists) {
+        final userData = userDoc.data() as Map<String, dynamic>;
 
-      // IncomingCallScreen dikhao
+        callerName = userData['name'] as String? ??
+            userData['displayName'] as String? ??
+            userData['username'] as String? ??
+            'Unknown';
+
+        callerImage = userData['photoUrl'] as String? ??
+            userData['profileImage'] as String? ??
+            userData['image'] as String? ??
+            userData['photoURL'] as String? ??
+            '';
+      }
+
+      print('👤 Caller: $callerName | Type: $callType');
+
       final context = navigatorKey.currentContext;
-      if (context == null || !context.mounted) return;
+      if (context == null || !context.mounted) {
+        print('❌ Context null — screen show nahi ho sakti');
+        return;
+      }
+
+      final currentRoute = ModalRoute.of(context);
+      if (currentRoute?.settings.name == '/incoming_call') {
+        print('⚠️ IncomingCallScreen pehle se open hai');
+        return;
+      }
 
       Navigator.of(context).push(
         MaterialPageRoute(
+          settings: const RouteSettings(name: '/incoming_call'),
           builder: (_) => IncomingCallScreen(
             callId: callId,
             callerId: callerId,
@@ -133,8 +235,11 @@ class _MyAppState extends State<MyApp> {
           ),
         ),
       );
+
+      print('✅ IncomingCallScreen show ho gayi!');
     } catch (e) {
-      debugPrint('Error fetching caller info: $e');
+      print('💥 Error: $e');
+      _shownCallIds.remove(callId);
     }
   }
 
@@ -145,9 +250,34 @@ class _MyAppState extends State<MyApp> {
         return MaterialApp(
           title: 'WeGo Marriage',
           debugShowCheckedModeBanner: false,
-
-          // ✅ Global navigator key — incoming call ke liye
           navigatorKey: navigatorKey,
+
+          // ✅ LANGUAGE SYSTEM — YE TEEN CHEEZEIN ADD KI HAIN
+          locale: settingsProvider.currentLocale,
+          supportedLocales: const [
+            Locale('en'), Locale('ur'), Locale('hi'), Locale('ar'),
+            Locale('zh'), Locale('ko'), Locale('ja'), Locale('fr'),
+            Locale('es'), Locale('de'), Locale('it'), Locale('pt'),
+            Locale('ru'), Locale('tr'), Locale('fa'), Locale('bn'),
+            Locale('pa'), Locale('gu'), Locale('mr'), Locale('ta'),
+            Locale('te'), Locale('ml'), Locale('kn'), Locale('si'),
+            Locale('ne'), Locale('th'), Locale('vi'), Locale('id'),
+            Locale('ms'), Locale('fil'),Locale('nl'), Locale('pl'),
+            Locale('uk'), Locale('ro'), Locale('hu'), Locale('cs'),
+            Locale('sv'), Locale('no'), Locale('da'), Locale('fi'),
+            Locale('el'), Locale('he'), Locale('sw'), Locale('am'),
+            Locale('ha'), Locale('yo'), Locale('zu'), Locale('my'),
+            Locale('km'), Locale('lo'), Locale('mn'), Locale('kk'),
+            Locale('uz'), Locale('az'), Locale('ka'), Locale('hy'),
+            Locale('sr'), Locale('hr'), Locale('sk'), Locale('bg'),
+            Locale('ca'),
+          ],
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,   // Material widgets
+            GlobalWidgetsLocalizations.delegate,    // Text direction (RTL/LTR)
+            GlobalCupertinoLocalizations.delegate,  // iOS style widgets
+          ],
+          // ✅ END LANGUAGE SYSTEM
 
           theme: ThemeData(
             brightness: Brightness.light,
@@ -167,8 +297,9 @@ class _MyAppState extends State<MyApp> {
               foregroundColor: Colors.white,
             ),
           ),
-          themeMode:
-          settingsProvider.isDarkMode ? ThemeMode.dark : ThemeMode.light,
+          themeMode: settingsProvider.isDarkMode
+              ? ThemeMode.dark
+              : ThemeMode.light,
           home: const SplashScreen(),
         );
       },

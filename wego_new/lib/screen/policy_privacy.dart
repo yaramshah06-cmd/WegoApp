@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'app_localizations.dart';
+import 'app_translations.dart';
 
 class PrivacyPolicyScreen extends StatelessWidget {
   const PrivacyPolicyScreen({super.key});
@@ -16,15 +18,11 @@ class PrivacyPolicyScreen extends StatelessWidget {
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         elevation: 0,
         leading: IconButton(
-          icon: Icon(
-            Icons.chevron_left,
-            color: primaryColor,
-            size: 30,
-          ),
+          icon: Icon(Icons.chevron_left, color: primaryColor, size: 30),
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
-          'Privacy Policy',
+          context.tr('privacy_policy_title'), // ✅
           style: TextStyle(
             color: primaryColor,
             fontSize: 20,
@@ -40,7 +38,7 @@ class PrivacyPolicyScreen extends StatelessWidget {
           children: [
             // Last Update Date
             Text(
-              'Last Update: 14/08/2024',
+              '${context.tr('last_update')}: 14/08/2024', // ✅
               style: TextStyle(
                 color: subTextColor,
                 fontSize: 12,
@@ -49,31 +47,21 @@ class PrivacyPolicyScreen extends StatelessWidget {
             ),
             const SizedBox(height: 16),
 
-            // First paragraph
             Text(
               'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Praesent pellentesque congue lorem, vel tincidunt tortor placerat a. Proin ac diam quam. Aenean in sagittis magna, ut feugiat diam. Fusce a scelerisque neque, sed accumsan metus.',
-              style: TextStyle(
-                color: textColor,
-                fontSize: 14,
-                height: 1.6,
-              ),
+              style: TextStyle(color: textColor, fontSize: 14, height: 1.6),
             ),
             const SizedBox(height: 16),
 
-            // Second paragraph
             Text(
               'Nunc auctor tortor in dolor luctus, quis euismod urna tincidunt. Aenean arcu metus, bibendum at rhoncus at, volutpat ut lacus. Morbi pellentesque malesuada eros semper ultrices. Vestibulum lobortis enim vel neque auctor, a ultrices ex placerat. Mauris ut lacinia justo, sed suscipit tortor. Nam egestas nulla posuere neque tincidunt porta.',
-              style: TextStyle(
-                color: textColor,
-                fontSize: 14,
-                height: 1.6,
-              ),
+              style: TextStyle(color: textColor, fontSize: 14, height: 1.6),
             ),
             const SizedBox(height: 32),
 
             // Terms & Conditions heading
             Text(
-              'Terms & Conditions',
+              context.tr('terms_conditions'), // ✅
               style: TextStyle(
                 color: primaryColor,
                 fontSize: 22,
@@ -82,35 +70,30 @@ class PrivacyPolicyScreen extends StatelessWidget {
             ),
             const SizedBox(height: 20),
 
-            // Numbered Terms list
             _buildNumberedItem(
               number: 1,
-              text:
-              'Ut lacinia justo sit amet lorem sodales accumsan. Proin malesuada eleifend fermentum. Donec condimentum, nunc at rhoncus faucibus, ex nisi laoreet ipsum, eu pharetra eros est vitae orci. Morbi quis rhoncus mi. Nullam lacinia ornare accumsan. Duis laoreet, ex eget rutrum pharetra, lectus nisl posuere risus, vel facilisis nisi tellus ac turpis.',
+              text: 'Ut lacinia justo sit amet lorem sodales accumsan. Proin malesuada eleifend fermentum. Donec condimentum, nunc at rhoncus faucibus, ex nisi laoreet ipsum, eu pharetra eros est vitae orci. Morbi quis rhoncus mi. Nullam lacinia ornare accumsan. Duis laoreet, ex eget rutrum pharetra, lectus nisl posuere risus, vel facilisis nisi tellus ac turpis.',
               textColor: textColor,
             ),
             const SizedBox(height: 16),
 
             _buildNumberedItem(
               number: 2,
-              text:
-              'Ut lacinia justo sit amet lorem sodales accumsan. Proin malesuada eleifend fermentum. Donec condimentum, nunc at rhoncus faucibus, ex nisi laoreet ipsum, eu pharetra eros est vitae orci. Morbi quis rhoncus mi. Nullam lacinia ornare accumsan. Duis laoreet, ex eget rutrum pharetra, lectus nisl posuere risus, vel facilisis nisi tellus.',
+              text: 'Ut lacinia justo sit amet lorem sodales accumsan. Proin malesuada eleifend fermentum. Donec condimentum, nunc at rhoncus faucibus, ex nisi laoreet ipsum, eu pharetra eros est vitae orci. Morbi quis rhoncus mi. Nullam lacinia ornare accumsan. Duis laoreet, ex eget rutrum pharetra, lectus nisl posuere risus, vel facilisis nisi tellus.',
               textColor: textColor,
             ),
             const SizedBox(height: 16),
 
             _buildNumberedItem(
               number: 3,
-              text:
-              'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Praesent pellentesque congue lorem, vel tincidunt tortor placerat a. Proin ac diam quam. Aenean in sagittis magna, ut feugiat diam.',
+              text: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Praesent pellentesque congue lorem, vel tincidunt tortor placerat a. Proin ac diam quam. Aenean in sagittis magna, ut feugiat diam.',
               textColor: textColor,
             ),
             const SizedBox(height: 16),
 
             _buildNumberedItem(
               number: 4,
-              text:
-              'Nunc auctor tortor in dolor luctus, quis euismod urna tincidunt. Aenean arcu metus, bibendum at rhoncus at, volutpat ut lacus. Morbi pellentesque malesuada eros semper ultrices. Vestibulum lobortis enim vel neque auctor, a ultrices ex placerat. Mauris ut lacinia justo, sed suscipit tortor. Nam egestas nulla posuere neque.',
+              text: 'Nunc auctor tortor in dolor luctus, quis euismod urna tincidunt. Aenean arcu metus, bibendum at rhoncus at, volutpat ut lacus. Morbi pellentesque malesuada eros semper ultrices. Vestibulum lobortis enim vel neque auctor, a ultrices ex placerat. Mauris ut lacinia justo, sed suscipit tortor. Nam egestas nulla posuere neque.',
               textColor: textColor,
             ),
             const SizedBox(height: 40),
@@ -120,11 +103,14 @@ class PrivacyPolicyScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildNumberedItem({required int number, required String text, required Color textColor}) {
+  Widget _buildNumberedItem({
+    required int number,
+    required String text,
+    required Color textColor,
+  }) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Number
         Text(
           '$number.',
           style: TextStyle(
@@ -135,15 +121,10 @@ class PrivacyPolicyScreen extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
-        // Text content
         Expanded(
           child: Text(
             text,
-            style: TextStyle(
-              color: textColor,
-              fontSize: 14,
-              height: 1.6,
-            ),
+            style: TextStyle(color: textColor, fontSize: 14, height: 1.6),
           ),
         ),
       ],

@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:wego_marriage/screen/home_feed_screen.dart';
 import 'package:wego_marriage/screen/nbr_screen.dart';
 import 'package:wego_marriage/screen/create_account.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -24,7 +25,12 @@ class _LoginScreenState extends State<LoginScreen> {
   String? _passwordError;
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final GoogleSignIn _googleSignIn = GoogleSignIn();
+
+  // ✅ FIX: serverClientId add kiya — Google Sign-In ke liye zaroori
+  final GoogleSignIn _googleSignIn = GoogleSignIn(
+    scopes: ['email', 'profile'],
+  );
+
   final LocalAuthentication _localAuth = LocalAuthentication();
 
   static const Color primaryBlue = Color(0xFF3D5AFE);
@@ -74,7 +80,7 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  // ─── CHECK: Firestore mein account exist karta hai? ──────────────────────────
+  // ─── CHECK: Firestore mein account exist karta hai? ─────────────────────────
   Future<bool> _checkUserExistsInFirestore(String uid) async {
     try {
       final docSnap = await FirebaseFirestore.instance
@@ -102,6 +108,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // ─── Email/Password Login ────────────────────────────────────────────────────
   Future<void> _handleLogin() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('location_asked');
     final email = _emailController.text.trim();
     final password = _passwordController.text;
 
@@ -180,25 +188,25 @@ class _LoginScreenState extends State<LoginScreen> {
       Navigator.pop(context);
       setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Login failed: $e'),
-          backgroundColor: Colors.red,
-        ),
+        SnackBar(content: Text('Login failed: $e'), backgroundColor: Colors.red),
       );
     }
   }
 
-  // ─── Google Sign-In (LOGIN — account hona chahiye) ───────────────────────────
+  // ─── Google Sign-In ──────────────────────────────────────────────────────────
   Future<void> _handleGoogleSignIn() async {
     setState(() => _isLoading = true);
     _showLoadingDialog();
 
     try {
+      // ✅ Pehle sign out karo taake fresh account picker aaye
       await _googleSignIn.signOut();
       await _auth.signOut();
 
       final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+
       if (googleUser == null) {
+        // User ne cancel kiya
         if (!mounted) return;
         Navigator.pop(context);
         setState(() => _isLoading = false);
@@ -207,6 +215,20 @@ class _LoginScreenState extends State<LoginScreen> {
 
       final GoogleSignInAuthentication googleAuth =
       await googleUser.authentication;
+
+      // ✅ Token check
+      if (googleAuth.accessToken == null || googleAuth.idToken == null) {
+        if (!mounted) return;
+        Navigator.pop(context);
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Google tokens not received. Please try again.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
 
       final OAuthCredential credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
@@ -217,20 +239,18 @@ class _LoginScreenState extends State<LoginScreen> {
       await _auth.signInWithCredential(credential);
       final user = userCredential.user!;
 
-      // ✅ KEY CHECK: Firestore mein account exist karta hai?
+      // ✅ Firestore mein account check
       final bool exists = await _checkUserExistsInFirestore(user.uid);
 
       if (!mounted) return;
-      Navigator.pop(context); // loading band karo
+      Navigator.pop(context);
       setState(() => _isLoading = false);
 
       if (!exists) {
-        // Account nahi bana — Firebase Auth se bhi sign out karo
         await _auth.signOut();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-                'No account found. Please sign up first.'),
+            content: Text('No account found. Please sign up first.'),
             backgroundColor: Colors.red,
             duration: Duration(seconds: 3),
           ),
@@ -238,7 +258,6 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
-      // Account hai — lastLogin update karo aur home bhejo
       await _updateLastLogin(user.uid);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -247,6 +266,16 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       );
       _goToHome();
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context);
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Google login error: ${e.message}'),
+          backgroundColor: Colors.red,
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       Navigator.pop(context);
@@ -260,12 +289,14 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // ─── Facebook Sign-In (LOGIN — account hona chahiye) ────────────────────────
+  // ─── Facebook Sign-In ────────────────────────────────────────────────────────
   Future<void> _handleFacebookSignIn() async {
     setState(() => _isLoading = true);
     _showLoadingDialog();
 
     try {
+      await FacebookAuth.instance.logOut();
+
       final LoginResult result = await FacebookAuth.instance.login(
         permissions: ['email', 'public_profile'],
       );
@@ -290,6 +321,19 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
+      if (result.accessToken == null) {
+        if (!mounted) return;
+        Navigator.pop(context);
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Facebook access token not received.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
       final OAuthCredential facebookCredential =
       FacebookAuthProvider.credential(result.accessToken!.tokenString);
 
@@ -297,7 +341,6 @@ class _LoginScreenState extends State<LoginScreen> {
       await _auth.signInWithCredential(facebookCredential);
       final user = userCredential.user!;
 
-      // ✅ KEY CHECK: Firestore mein account exist karta hai?
       final bool exists = await _checkUserExistsInFirestore(user.uid);
 
       if (!mounted) return;
@@ -305,12 +348,10 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() => _isLoading = false);
 
       if (!exists) {
-        // Account nahi bana — Firebase Auth se bhi sign out karo
         await _auth.signOut();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-                'No account found. Please sign up first.'),
+            content: Text('No account found. Please sign up first.'),
             backgroundColor: Colors.red,
             duration: Duration(seconds: 3),
           ),
@@ -318,7 +359,6 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
-      // Account hai — lastLogin update karo aur home bhejo
       await _updateLastLogin(user.uid);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -327,6 +367,16 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       );
       _goToHome();
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context);
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Facebook error: ${e.message}'),
+          backgroundColor: Colors.red,
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       Navigator.pop(context);
@@ -350,7 +400,8 @@ class _LoginScreenState extends State<LoginScreen> {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Biometric authentication not available on this device.'),
+            content:
+            Text('Biometric authentication not available on this device.'),
             backgroundColor: Colors.orange,
           ),
         );
@@ -386,7 +437,6 @@ class _LoginScreenState extends State<LoginScreen> {
         final User? currentUser = _auth.currentUser;
 
         if (currentUser != null) {
-          // ✅ Biometric ke liye bhi Firestore check
           final bool exists =
           await _checkUserExistsInFirestore(currentUser.uid);
           if (!exists) {
@@ -422,7 +472,8 @@ class _LoginScreenState extends State<LoginScreen> {
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Biometric authentication failed. Please try again.'),
+            content:
+            Text('Biometric authentication failed. Please try again.'),
             backgroundColor: Colors.red,
           ),
         );
@@ -479,11 +530,12 @@ class _LoginScreenState extends State<LoginScreen> {
                 children: [
                   IconButton(
                     onPressed: () => Navigator.maybePop(context),
-                    icon: Icon(Icons.arrow_back_ios, color: textColor, size: 20),
+                    icon:
+                    Icon(Icons.arrow_back_ios, color: textColor, size: 20),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                   ),
-                  Expanded(
+                  const Expanded(
                     child: Center(
                       child: Text(
                         'Log In',
@@ -499,9 +551,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(width: 40),
                 ],
               ),
-
               const SizedBox(height: 36),
-
               const Text(
                 'Welcome',
                 style: TextStyle(
@@ -520,9 +570,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   letterSpacing: 0.2,
                 ),
               ),
-
               const SizedBox(height: 48),
-
               _buildTextField(
                 context: context,
                 controller: _emailController,
@@ -530,9 +578,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 keyboardType: TextInputType.emailAddress,
                 errorText: _emailError,
               ),
-
               const SizedBox(height: 20),
-
               _buildTextField(
                 context: context,
                 controller: _passwordController,
@@ -552,7 +598,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   },
                 ),
               ),
-
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton(
@@ -560,8 +605,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => const NbrScreen(),
-                      ),
+                          builder: (context) => const NbrScreen()),
                     );
                   },
                   child: const Text(
@@ -570,9 +614,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
               ),
-
               const SizedBox(height: 20),
-
               SizedBox(
                 width: double.infinity,
                 height: 56,
@@ -615,9 +657,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
               ),
-
               const Spacer(),
-
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -625,35 +665,32 @@ class _LoginScreenState extends State<LoginScreen> {
                     context: context,
                     icon: Icons.g_mobiledata_rounded,
                     iconSize: 28,
-                    onTap: _handleGoogleSignIn,
+                    onTap: _isLoading ? () {} : _handleGoogleSignIn,
                   ),
                   const SizedBox(width: 20),
                   _buildSocialButton(
                     context: context,
                     icon: Icons.facebook_rounded,
                     iconSize: 24,
-                    onTap: _handleFacebookSignIn,
+                    onTap: _isLoading ? () {} : _handleFacebookSignIn,
                   ),
                   const SizedBox(width: 20),
                   _buildSocialButton(
                     context: context,
                     icon: Icons.fingerprint,
                     iconSize: 24,
-                    onTap: _handleBiometricAuth,
+                    onTap: _isLoading ? () {} : _handleBiometricAuth,
                   ),
                 ],
               ),
-
               const SizedBox(height: 24),
-
               Center(
                 child: TextButton(
                   onPressed: () {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => const CreateAccountScreen(),
-                      ),
+                          builder: (context) => const CreateAccountScreen()),
                     );
                   },
                   child: RichText(
@@ -674,7 +711,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
               ),
-
               const SizedBox(height: 16),
             ],
           ),
@@ -703,7 +739,9 @@ class _LoginScreenState extends State<LoginScreen> {
             border: Border.all(
               color: errorText != null
                   ? Colors.red
-                  : (isDark ? const Color(0xFF2A2A4A) : Colors.grey[300]!),
+                  : (isDark
+                  ? const Color(0xFF2A2A4A)
+                  : Colors.grey[300]!),
               width: 1,
             ),
           ),

@@ -3,6 +3,9 @@ import 'package:provider/provider.dart';
 import '../providers/settings_provider.dart';
 import 'notification_screen.dart';
 import 'password_manager.dart';
+import 'language_screen.dart';
+import 'app_localizations.dart';
+import 'app_translations.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -26,7 +29,7 @@ class SettingsScreen extends StatelessWidget {
           ),
         ),
         title: Text(
-          'Settings',
+          context.tr('settings'), // ✅ Translated
           style: TextStyle(
             color: isDark ? Colors.white : const Color(0xFF4A6CF7),
             fontWeight: FontWeight.bold,
@@ -41,7 +44,7 @@ class SettingsScreen extends StatelessWidget {
           children: [
             SettingsMenuItem(
               icon: Icons.lightbulb_outline,
-              label: 'Notification Setting',
+              label: context.tr('notification_setting'), // ✅
               onTap: () {
                 Navigator.push(
                   context,
@@ -53,7 +56,7 @@ class SettingsScreen extends StatelessWidget {
             ),
             SettingsMenuItem(
               icon: Icons.key_outlined,
-              label: 'Password Manager',
+              label: context.tr('password_manager'), // ✅
               onTap: () {
                 Navigator.push(
                   context,
@@ -63,9 +66,28 @@ class SettingsScreen extends StatelessWidget {
                 );
               },
             ),
+
+            Consumer<SettingsProvider>(
+              builder: (context, settingsProvider, _) {
+                return SettingsMenuItem(
+                  icon: Icons.language_outlined,
+                  label: context.tr('language'), // ✅
+                  subtitle: settingsProvider.preferredLanguage,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const LanguageScreen(),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+
             SettingsMenuItem(
               icon: Icons.dark_mode_outlined,
-              label: 'Theme',
+              label: context.tr('theme'), // ✅
               onTap: () {
                 Navigator.push(
                   context,
@@ -77,7 +99,7 @@ class SettingsScreen extends StatelessWidget {
             ),
             SettingsMenuItem(
               icon: Icons.person_remove_outlined,
-              label: 'Delete Account',
+              label: context.tr('delete_account'), // ✅
               isDestructive: true,
               onTap: () {
                 _showDeleteAccountDialog(context);
@@ -96,23 +118,23 @@ class SettingsScreen extends StatelessWidget {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
         ),
-        title: const Text(
-          'Delete Account',
-          style: TextStyle(
+        title: Text(
+          context.tr('delete_account'), // ✅
+          style: const TextStyle(
             fontWeight: FontWeight.bold,
             color: Colors.black87,
           ),
         ),
-        content: const Text(
-          'Are you sure you want to delete your account? This action cannot be undone.',
-          style: TextStyle(color: Colors.black54, fontSize: 14),
+        content: Text(
+          context.tr('delete_account_msg'), // ✅
+          style: const TextStyle(color: Colors.black54, fontSize: 14),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text(
-              'Cancel',
-              style: TextStyle(color: Color(0xFF4A6CF7)),
+            child: Text(
+              context.tr('cancel'), // ✅
+              style: const TextStyle(color: Color(0xFF4A6CF7)),
             ),
           ),
           ElevatedButton(
@@ -126,9 +148,9 @@ class SettingsScreen extends StatelessWidget {
                 borderRadius: BorderRadius.circular(10),
               ),
             ),
-            child: const Text(
-              'Delete',
-              style: TextStyle(color: Colors.white),
+            child: Text(
+              context.tr('delete'), // ✅
+              style: const TextStyle(color: Colors.white),
             ),
           ),
         ],
@@ -137,6 +159,9 @@ class SettingsScreen extends StatelessWidget {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────
+// ThemeScreen
+// ─────────────────────────────────────────────────────────────────
 class ThemeScreen extends StatelessWidget {
   const ThemeScreen({super.key});
 
@@ -159,7 +184,7 @@ class ThemeScreen extends StatelessWidget {
           ),
         ),
         title: Text(
-          'Theme Setting',
+          context.tr('theme_setting'), // ✅
           style: TextStyle(
             color: isDark ? Colors.white : const Color(0xFF4A6CF7),
             fontWeight: FontWeight.bold,
@@ -185,7 +210,9 @@ class ThemeScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 20),
                   Text(
-                    settingsProvider.isDarkMode ? 'Dark Mode' : 'Light Mode',
+                    settingsProvider.isDarkMode
+                        ? context.tr('dark_mode')  // ✅
+                        : context.tr('light_mode'), // ✅
                     style: TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
@@ -199,7 +226,8 @@ class ThemeScreen extends StatelessWidget {
                       settingsProvider.toggleTheme(value);
                     },
                     activeThumbColor: const Color(0xFF4A6CF7),
-                    activeTrackColor: const Color(0xFF4A6CF7).withValues(alpha: 0.5),
+                    activeTrackColor:
+                    const Color(0xFF4A6CF7).withValues(alpha: 0.5),
                   ),
                 ],
               ),
@@ -211,9 +239,13 @@ class ThemeScreen extends StatelessWidget {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────
+// SettingsMenuItem — unchanged, already correct
+// ─────────────────────────────────────────────────────────────────
 class SettingsMenuItem extends StatelessWidget {
   final IconData icon;
   final String label;
+  final String? subtitle;
   final VoidCallback onTap;
   final bool isDestructive;
 
@@ -222,6 +254,7 @@ class SettingsMenuItem extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.onTap,
+    this.subtitle,
     this.isDestructive = false,
   });
 
@@ -239,30 +272,42 @@ class SettingsMenuItem extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 14),
           child: Row(
             children: [
-              // Icon
               Icon(
                 icon,
-                color: const Color(0xFF4A6CF7),
+                color: isDestructive ? Colors.red : const Color(0xFF4A6CF7),
                 size: 24,
               ),
               const SizedBox(width: 20),
-
-              // Label
               Expanded(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w500,
-                    color: isDark ? Colors.white : Colors.black87,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                        color: isDestructive
+                            ? Colors.red
+                            : (isDark ? Colors.white : Colors.black87),
+                      ),
+                    ),
+                    if (subtitle != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle!,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: isDark ? Colors.white38 : Colors.black38,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
-
-              // Arrow
-              const Icon(
+              Icon(
                 Icons.arrow_forward_ios,
-                color: Color(0xFF4A6CF7),
+                color: isDestructive ? Colors.red : const Color(0xFF4A6CF7),
                 size: 16,
               ),
             ],

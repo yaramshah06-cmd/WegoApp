@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/settings_provider.dart';
+import 'app_localizations.dart';
+import 'app_translations.dart';
 
 class LogoutScreen extends StatefulWidget {
   const LogoutScreen({super.key});
@@ -11,9 +15,22 @@ class _LogoutScreenState extends State<LogoutScreen> {
   static const Color primaryBlue = Color(0xFF4A6CF7);
   static const Color accentPink = Color(0xFFDD2A7B);
 
+  Future<void> _handleLogout(BuildContext ctx) async {
+    await context.read<SettingsProvider>().resetLanguageToDefault();
+    if (ctx.mounted) Navigator.pop(ctx);
+    // await FirebaseAuth.instance.signOut();
+    // if (context.mounted) {
+    //   Navigator.pushAndRemoveUntil(
+    //     context,
+    //     MaterialPageRoute(builder: (_) => const LoginScreen()),
+    //     (route) => false,
+    //   );
+    // }
+  }
+
   void _showLogoutDialog(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
-    
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -21,7 +38,8 @@ class _LogoutScreenState extends State<LogoutScreen> {
       builder: (ctx) => Container(
         decoration: BoxDecoration(
           color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+          borderRadius:
+          const BorderRadius.vertical(top: Radius.circular(32)),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.2),
@@ -34,6 +52,7 @@ class _LogoutScreenState extends State<LogoutScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // ── Handle bar ──────────────────────────────────
             Container(
               width: 50,
               height: 5,
@@ -43,17 +62,25 @@ class _LogoutScreenState extends State<LogoutScreen> {
               ),
             ),
             const SizedBox(height: 32),
+
+            // ── Icon ────────────────────────────────────────
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: Colors.red.withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.logout_rounded, color: Colors.red, size: 32),
+              child: const Icon(
+                Icons.logout_rounded,
+                color: Colors.red,
+                size: 32,
+              ),
             ),
             const SizedBox(height: 20),
+
+            // ── Title ✅ TRANSLATED ──────────────────────────
             Text(
-              'Logout',
+              context.tr('logout'),
               style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.bold,
@@ -61,8 +88,10 @@ class _LogoutScreenState extends State<LogoutScreen> {
               ),
             ),
             const SizedBox(height: 12),
+
+            // ── Subtitle ✅ TRANSLATED ───────────────────────
             Text(
-              'Are you sure you want to log out from your account?',
+              context.tr('logout_msg'),
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 15,
@@ -71,8 +100,11 @@ class _LogoutScreenState extends State<LogoutScreen> {
               ),
             ),
             const SizedBox(height: 32),
+
+            // ── Buttons ─────────────────────────────────────
             Row(
               children: [
+                // Cancel ✅ TRANSLATED
                 Expanded(
                   child: TextButton(
                     onPressed: () => Navigator.pop(ctx),
@@ -83,7 +115,7 @@ class _LogoutScreenState extends State<LogoutScreen> {
                       ),
                     ),
                     child: Text(
-                      'Cancel',
+                      context.tr('cancel'),
                       style: TextStyle(
                         color: isDark ? Colors.white70 : Colors.black54,
                         fontWeight: FontWeight.w600,
@@ -93,12 +125,11 @@ class _LogoutScreenState extends State<LogoutScreen> {
                   ),
                 ),
                 const SizedBox(width: 16),
+
+                // Yes Logout ✅ TRANSLATED
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      // Add logout logic here
-                    },
+                    onPressed: () => _handleLogout(ctx),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.redAccent,
                       foregroundColor: Colors.white,
@@ -108,9 +139,9 @@ class _LogoutScreenState extends State<LogoutScreen> {
                       ),
                       elevation: 0,
                     ),
-                    child: const Text(
-                      'Yes, Logout',
-                      style: TextStyle(
+                    child: Text(
+                      context.tr('yes_logout'),
+                      style: const TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 16,
                       ),
@@ -132,54 +163,73 @@ class _LogoutScreenState extends State<LogoutScreen> {
     final Color subTextColor = isDark ? Colors.white60 : Colors.black45;
 
     return Scaffold(
-      backgroundColor: isDark ? const Color(0xFF121212) : const Color(0xFFF8F9FE),
+      backgroundColor:
+      isDark ? const Color(0xFF121212) : const Color(0xFFF8F9FE),
       body: SafeArea(
         child: Column(
           children: [
-            // ─── Custom App Bar ────────────────────────────────
             _buildAppBar(textColor),
-
             Expanded(
               child: SingleChildScrollView(
                 physics: const BouncingScrollPhysics(),
                 child: Column(
                   children: [
                     const SizedBox(height: 20),
-                    // ─── Profile Header ──────────────────────────
                     _buildProfileHeader(isDark, textColor, subTextColor),
-                    
                     const SizedBox(height: 32),
 
-                    // ─── Menu Sections ───────────────────────────
+                    // ─── Account Settings ✅ TRANSLATED ─────
                     _buildMenuSection(
                       context,
-                      'Account Settings',
+                      context.tr('account_settings'),
                       [
-                        _MenuItemData(Icons.person_outline_rounded, 'Personal Profile', 'Manage your info'),
-                        _MenuItemData(Icons.favorite_outline_rounded, 'My Favorites', 'People you liked'),
-                        _MenuItemData(Icons.account_balance_wallet_outlined, 'Payment Methods', 'Subscriptions & cards'),
+                        _MenuItemData(
+                          Icons.person_outline_rounded,
+                          context.tr('personal_profile'),
+                          context.tr('manage_info'),
+                        ),
+                        _MenuItemData(
+                          Icons.favorite_outline_rounded,
+                          context.tr('my_favorites'),
+                          context.tr('people_liked'),
+                        ),
+                        _MenuItemData(
+                          Icons.account_balance_wallet_outlined,
+                          context.tr('payment_methods'),
+                          context.tr('subscriptions'),
+                        ),
                       ],
                       isDark,
                     ),
 
                     const SizedBox(height: 20),
 
+                    // ─── Preferences ✅ TRANSLATED ───────────
                     _buildMenuSection(
                       context,
-                      'Preferences',
+                      context.tr('preferences'),
                       [
-                        _MenuItemData(Icons.lock_outline_rounded, 'Privacy & Policy', 'Secure your account'),
-                        _MenuItemData(Icons.settings_outlined, 'App Settings', 'Themes & notifications'),
-                        _MenuItemData(Icons.help_outline_rounded, 'Help Center', 'FAQs & support'),
+                        _MenuItemData(
+                          Icons.lock_outline_rounded,
+                          context.tr('privacy_policy'),
+                          context.tr('secure_account'),
+                        ),
+                        _MenuItemData(
+                          Icons.settings_outlined,
+                          context.tr('app_settings'),
+                          context.tr('themes_notifications'),
+                        ),
+                        _MenuItemData(
+                          Icons.help_outline_rounded,
+                          context.tr('help_center'),
+                          context.tr('faqs_support'),
+                        ),
                       ],
                       isDark,
                     ),
 
                     const SizedBox(height: 40),
-
-                    // ─── Logout Button ───────────────────────────
                     _buildLogoutButton(),
-                    
                     const SizedBox(height: 30),
                   ],
                 ),
@@ -202,8 +252,9 @@ class _LogoutScreenState extends State<LogoutScreen> {
             color: primaryBlue,
             onPressed: () => Navigator.maybePop(context),
           ),
+          // ✅ TRANSLATED
           Text(
-            'Settings',
+            context.tr('settings'),
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.bold,
@@ -211,13 +262,14 @@ class _LogoutScreenState extends State<LogoutScreen> {
               letterSpacing: 0.5,
             ),
           ),
-          const SizedBox(width: 48), // Spacer for balance
+          const SizedBox(width: 48),
         ],
       ),
     );
   }
 
-  Widget _buildProfileHeader(bool isDark, Color textColor, Color subTextColor) {
+  Widget _buildProfileHeader(
+      bool isDark, Color textColor, Color subTextColor) {
     return Column(
       children: [
         Stack(
@@ -264,7 +316,12 @@ class _LogoutScreenState extends State<LogoutScreen> {
                 decoration: BoxDecoration(
                   color: primaryBlue,
                   shape: BoxShape.circle,
-                  border: Border.all(color: isDark ? const Color(0xFF121212) : Colors.white, width: 3),
+                  border: Border.all(
+                    color: isDark
+                        ? const Color(0xFF121212)
+                        : Colors.white,
+                    width: 3,
+                  ),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withValues(alpha: 0.1),
@@ -282,8 +339,10 @@ class _LogoutScreenState extends State<LogoutScreen> {
           ],
         ),
         const SizedBox(height: 16),
+
+        // ✅ TRANSLATED — user_name
         Text(
-          'John Doe',
+          context.tr('user_name'),
           style: TextStyle(
             fontSize: 22,
             fontWeight: FontWeight.bold,
@@ -291,8 +350,10 @@ class _LogoutScreenState extends State<LogoutScreen> {
           ),
         ),
         const SizedBox(height: 4),
+
+        // ✅ TRANSLATED — user_email
         Text(
-          'johndoe.match@email.com',
+          context.tr('user_email'),
           style: TextStyle(
             fontSize: 14,
             color: subTextColor,
@@ -303,7 +364,12 @@ class _LogoutScreenState extends State<LogoutScreen> {
     );
   }
 
-  Widget _buildMenuSection(BuildContext context, String title, List<_MenuItemData> items, bool isDark) {
+  Widget _buildMenuSection(
+      BuildContext context,
+      String title,
+      List<_MenuItemData> items,
+      bool isDark,
+      ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -349,7 +415,9 @@ class _LogoutScreenState extends State<LogoutScreen> {
                       padding: const EdgeInsets.only(left: 64, right: 20),
                       child: Divider(
                         height: 1,
-                        color: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.grey[100],
+                        color: isDark
+                            ? Colors.white.withValues(alpha: 0.05)
+                            : Colors.grey[100],
                       ),
                     ),
                 ],
@@ -361,7 +429,8 @@ class _LogoutScreenState extends State<LogoutScreen> {
     );
   }
 
-  Widget _buildMenuItem(IconData icon, String label, String subtitle, Color textColor) {
+  Widget _buildMenuItem(
+      IconData icon, String label, String subtitle, Color textColor) {
     return InkWell(
       onTap: () {},
       borderRadius: BorderRadius.circular(24),
@@ -423,19 +492,27 @@ class _LogoutScreenState extends State<LogoutScreen> {
           padding: const EdgeInsets.symmetric(vertical: 18),
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [Colors.redAccent.withValues(alpha: 0.1), Colors.red.withValues(alpha: 0.05)],
+              colors: [
+                Colors.redAccent.withValues(alpha: 0.1),
+                Colors.red.withValues(alpha: 0.05),
+              ],
             ),
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: Colors.redAccent.withValues(alpha: 0.2)),
+            border: Border.all(
+                color: Colors.redAccent.withValues(alpha: 0.2)),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.power_settings_new_rounded, color: Colors.redAccent, size: 22),
+              const Icon(
+                Icons.power_settings_new_rounded,
+                color: Colors.redAccent,
+                size: 22,
+              ),
               const SizedBox(width: 12),
-              const Text(
-                'Sign Out',
-                style: TextStyle(
+              Text(
+                context.tr('sign_out'), // ✅ TRANSLATED
+                style: const TextStyle(
                   color: Colors.redAccent,
                   fontWeight: FontWeight.bold,
                   fontSize: 16,

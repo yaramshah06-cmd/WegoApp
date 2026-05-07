@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:badges/badges.dart' as badges;
 import 'package:wego_marriage/providers/story_provider.dart';
 import 'package:wego_marriage/providers/chat_provider.dart';
+import 'package:wego_marriage/providers/user_provider.dart';
 import 'package:wego_marriage/screen/story_screen.dart';
 import 'package:wego_marriage/screen/my_profile.dart';
 import 'package:wego_marriage/screen/massage_list_screen.dart';
@@ -10,10 +14,13 @@ import 'package:wego_marriage/screen/comments_screen.dart';
 import 'package:wego_marriage/screen/user_profile_screen.dart';
 import 'package:wego_marriage/screen/create_content_screen.dart';
 import 'package:wego_marriage/screen/connection_secreen.dart';
-import 'package:wego_marriage/screen/search_screen.dart'; // ← Search Screen import
+import 'package:wego_marriage/screen/search_screen.dart';
 import 'package:wego_marriage/services/local_storage_service.dart';
+import 'package:wego_marriage/services/message_badge_service.dart';
 import 'package:video_player/video_player.dart';
 import 'package:share_plus/share_plus.dart';
+import 'app_localizations.dart';
+import 'app_translations.dart';
 
 class HomeFeedScreen extends StatefulWidget {
   const HomeFeedScreen({super.key});
@@ -24,8 +31,18 @@ class HomeFeedScreen extends StatefulWidget {
 
 class _HomeFeedScreenState extends State<HomeFeedScreen> {
   int _selectedIndex = 0;
-
   DateTime? _lastBackPressTime;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() {
+      if (mounted) {
+        context.read<UserProvider>().loadUserFromFirebase();
+        context.read<ChatProvider>().loadChats();
+      }
+    });
+  }
 
   final List<Widget> _tabs = [
     const _HomeTab(),
@@ -41,9 +58,9 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
         now.difference(_lastBackPressTime!) > const Duration(seconds: 2)) {
       _lastBackPressTime = now;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Press back again to exit'),
-          duration: Duration(seconds: 2),
+        SnackBar(
+          content: Text(context.tr('press_back_exit')), // ✅ TRANSLATED
+          duration: const Duration(seconds: 2),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -112,11 +129,11 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
     final primaryColor = const Color(0xFF4A6CF7);
 
     final List<Map<String, dynamic>> items = [
-      {'icon': Icons.home_rounded, 'label': 'Home'},
-      {'icon': Icons.bookmark_border, 'label': 'Favorite'},
-      {'icon': null, 'label': ''},
-      {'icon': Icons.chat_bubble_outline, 'label': 'Chats'},
-      {'icon': Icons.person_outline, 'label': 'Profile'},
+      {'icon': Icons.home_rounded,        'label': context.tr('nav_home')},      // ✅
+      {'icon': Icons.bookmark_border,     'label': context.tr('nav_favorite')},  // ✅
+      {'icon': null,                      'label': ''},
+      {'icon': Icons.chat_bubble_outline, 'label': context.tr('nav_chats')},     // ✅
+      {'icon': Icons.person_outline,      'label': context.tr('nav_profile')},   // ✅
     ];
 
     return Container(
@@ -131,39 +148,76 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
           ),
         ],
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: List.generate(items.length, (i) {
-          if (i == 2) return const SizedBox(width: 60);
-          final bool selected = _selectedIndex == i;
-          final color = selected
-              ? primaryColor
-              : (isDark ? Colors.white54 : Colors.black38);
+      child: ValueListenableBuilder<int>(
+        valueListenable: MessageBadgeService.unreadCount,
+        builder: (context, unreadCount, child) {
+          return Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: List.generate(items.length, (i) {
+              if (i == 2) return const SizedBox(width: 60);
+              final bool selected = _selectedIndex == i;
+              final color = selected
+                  ? primaryColor
+                  : (isDark ? Colors.white54 : Colors.black38);
 
-          return GestureDetector(
-            onTap: () {
+              Widget iconWidget;
               if (i == 3) {
-                context.read<ChatProvider>().loadChats();
-              }
-              setState(() => _selectedIndex = i);
-            },
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(items[i]['icon'] as IconData, color: color, size: 24),
-                const SizedBox(height: 3),
-                Text(
-                  items[i]['label'] as String,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 11,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
+                iconWidget = badges.Badge(
+                  showBadge: unreadCount > 0,
+                  badgeContent: Text(
+                    unreadCount > 99 ? '99+' : unreadCount.toString(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
+                  badgeStyle: const badges.BadgeStyle(
+                    badgeColor: Colors.red,
+                    padding: EdgeInsets.all(4),
+                  ),
+                  position: badges.BadgePosition.topEnd(top: -6, end: -6),
+                  child: Icon(
+                    items[i]['icon'] as IconData,
+                    color: color,
+                    size: 24,
+                  ),
+                );
+              } else {
+                iconWidget = Icon(
+                  items[i]['icon'] as IconData,
+                  color: color,
+                  size: 24,
+                );
+              }
+
+              return GestureDetector(
+                onTap: () {
+                  if (i == 3) {
+                    context.read<ChatProvider>().loadChats();
+                  }
+                  setState(() => _selectedIndex = i);
+                },
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    iconWidget,
+                    const SizedBox(height: 3),
+                    Text(
+                      items[i]['label'] as String,
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 11,
+                        fontWeight:
+                        selected ? FontWeight.w700 : FontWeight.w400,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              );
+            }),
           );
-        }),
+        },
       ),
     );
   }
@@ -180,7 +234,11 @@ class _HomeTabState extends State<_HomeTab> {
   final ScrollController _scrollController = ScrollController();
   final List<Post> _posts = [];
   bool _isLoading = false;
-  int _page = 0;
+  bool _hasMore = true;
+  DocumentSnapshot? _lastDocument;
+
+  final _firestore = FirebaseFirestore.instance;
+  static const int _pageSize = 10;
 
   @override
   void initState() {
@@ -203,49 +261,74 @@ class _HomeTabState extends State<_HomeTab> {
   }
 
   Future<void> _loadMorePosts() async {
-    if (_isLoading) return;
+    if (_isLoading || !_hasMore) return;
     setState(() => _isLoading = true);
-    await Future.delayed(const Duration(milliseconds: 800));
-    final newPosts = _generatePosts(_page);
-    setState(() {
-      _posts.addAll(newPosts);
-      _page++;
-      _isLoading = false;
-    });
-  }
 
-  List<Post> _generatePosts(int page) {
-    final List<Post> posts = [];
-    final startIndex = page * 5;
-    for (int i = 0; i < 5; i++) {
-      final index = startIndex + i;
-      posts.add(Post(
-        id: 'post_$index',
-        avatarUrl: 'https://i.pravatar.cc/150?img=${(index % 70) + 1}',
-        username: _getRandomUsername(index),
-        time: '${index + 1} ${index == 0 ? 'day' : 'days'} ago',
-        postImageUrl: 'https://picsum.photos/seed/post$index/800/700',
-        likes: '${(4.2 - (index * 0.1)).toStringAsFixed(1)}k',
-        comments: '${900 - (index * 10)}',
-        isVideo: index % 4 == 0,
-        caption:
-        'Living my best life! ${['#travel', '#lifestyle', '#fashion', '#photography', '#wedding', '#marriage'][index % 6]} ${['#love', '#happiness', '#blessed', '#instagood', '#beautiful', '#summer'][index % 6]}',
-        hashtags: const ['#love', '#instagood', '#photooftheday'],
-        isLarge: index % 3 != 1,
-      ));
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) {
+      setState(() => _isLoading = false);
+      return;
     }
-    return posts;
+    try {
+      final currentUid = currentUser.uid;
+
+      Query query = _firestore
+          .collection('posts')
+          .orderBy('timestamp', descending: true)
+          .limit(_pageSize);
+
+      if (_lastDocument != null) {
+        query = query.startAfterDocument(_lastDocument!);
+      }
+
+      final snapshot = await query.get();
+
+      if (snapshot.docs.isEmpty) {
+        setState(() {
+          _hasMore = false;
+          _isLoading = false;
+        });
+        return;
+      }
+
+      _lastDocument = snapshot.docs.last;
+
+      final filteredDocs = snapshot.docs.where((doc) {
+        final data = doc.data() as Map<String, dynamic>;
+        final visibility = data['visibility'] as String? ?? 'everyone';
+        final authorId = data['authorid'] as String? ?? '';
+        final allowedUids = List<String>.from(data['allowedUids'] ?? []);
+
+        if (visibility == 'only_me') return authorId == currentUid;
+        if (visibility == 'close_friends') return allowedUids.contains(currentUid);
+        return true;
+      }).toList();
+
+      final newPosts = filteredDocs.map((doc) {
+        final data = doc.data() as Map<String, dynamic>;
+        return Post.fromFirestore(doc.id, data);
+      }).toList();
+
+      setState(() {
+        _posts.addAll(newPosts);
+        _isLoading = false;
+        if (snapshot.docs.length < _pageSize) _hasMore = false;
+      });
+    } catch (e) {
+      setState(() => _isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${context.tr('posts_load_error')}: $e')), // ✅ TRANSLATED
+        );
+      }
+    }
   }
 
-  String _getRandomUsername(int index) {
-    const names = [
-      'Alex Johnson', 'Sarah Smith', 'Mike Brown', 'Emma Wilson',
-      'James Davis', 'Lisa Anderson', 'Chris Taylor', 'Anna Martinez',
-      'David Lee', 'Sophie Chen', 'Ryan Garcia', 'Maria Lopez',
-      'Tom White', 'Kate Miller', 'Jack Wilson', 'Nina Patel',
-      'Leo Kim', 'Olivia Jones', 'Daniel Moore', 'Emily Clark',
-    ];
-    return names[index % names.length];
+  Future<void> _onRefresh() async {
+    _posts.clear();
+    _lastDocument = null;
+    _hasMore = true;
+    await _loadMorePosts();
   }
 
   @override
@@ -263,35 +346,63 @@ class _HomeTabState extends State<_HomeTab> {
               children: [
                 _buildStoryRow(context, userStories),
                 const SizedBox(height: 10),
-                _buildSearchBar(context), // ← Search bar (tappable)
+                _buildSearchBar(context),
                 const SizedBox(height: 12),
               ],
             ),
           ),
           Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              padding: EdgeInsets.zero,
-              itemCount: _posts.length + 1,
-              itemBuilder: (context, index) {
-                if (index == _posts.length) {
-                  return _isLoading
-                      ? const Padding(
-                    padding: EdgeInsets.all(16.0),
-                    child: Center(
-                      child: CircularProgressIndicator(
-                        color: Color(0xFF4A6CF7),
-                      ),
-                    ),
-                  )
-                      : const SizedBox(height: 80);
-                }
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8.0),
-                  child: _InstagramStylePostCard(post: _posts[index]),
-                );
-              },
+            child: RefreshIndicator(
+              onRefresh: _onRefresh,
+              color: const Color(0xFF4A6CF7),
+              child: _posts.isEmpty && !_isLoading
+                  ? _buildEmptyState()
+                  : ListView.builder(
+                controller: _scrollController,
+                padding: EdgeInsets.zero,
+                itemCount: _posts.length + 1,
+                itemBuilder: (context, index) {
+                  if (index == _posts.length) {
+                    if (_isLoading) {
+                      return const Padding(
+                        padding: EdgeInsets.all(16.0),
+                        child: Center(
+                          child: CircularProgressIndicator(
+                            color: Color(0xFF4A6CF7),
+                          ),
+                        ),
+                      );
+                    }
+                    return const SizedBox(height: 80);
+                  }
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8.0),
+                    child: _InstagramStylePostCard(post: _posts[index]),
+                  );
+                },
+              ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.photo_library_outlined, size: 64, color: Colors.grey[400]),
+          const SizedBox(height: 12),
+          Text(
+            context.tr('no_posts_found'),       // ✅ TRANSLATED
+            style: TextStyle(color: Colors.grey[600], fontSize: 16),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            context.tr('create_first_post'),    // ✅ TRANSLATED
+            style: TextStyle(color: Colors.grey[400], fontSize: 13),
           ),
         ],
       ),
@@ -343,7 +454,6 @@ class _HomeTabState extends State<_HomeTab> {
     );
   }
 
-  // ✅ UPDATED: Search bar ab tappable hai — SearchScreen pe navigate karta hai
   Widget _buildSearchBar(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
@@ -383,7 +493,7 @@ class _HomeTabState extends State<_HomeTab> {
               ),
               const SizedBox(width: 8),
               Text(
-                'Search users, posts, videos...',
+                context.tr('search_hint'), // ✅ TRANSLATED
                 style: TextStyle(
                   color: isDark ? Colors.white54 : const Color(0xFFAAAAAA),
                   fontSize: 15,
@@ -483,6 +593,9 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
   bool _isVideoInitialized = false;
   final LocalStorageService _storage = LocalStorageService();
 
+  final _firestore = FirebaseFirestore.instance;
+  final _auth = FirebaseAuth.instance;
+
   @override
   void initState() {
     super.initState();
@@ -493,7 +606,7 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
   void _loadPersistedState() {
     _isLiked = _storage.isPostLiked(widget.post.id);
     _isSaved = _storage.isPostSaved(widget.post.id);
-    _isFollowing = _storage.isUserFollowed(widget.post.username);
+    _isFollowing = _storage.isUserFollowed(widget.post.userId);
     setState(() {});
   }
 
@@ -505,8 +618,7 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
 
   void _initializeVideo() {
     _videoController = VideoPlayerController.networkUrl(
-      Uri.parse(
-          'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'),
+      Uri.parse(widget.post.videoUrl ?? ''),
     )..initialize().then((_) {
       if (mounted) {
         setState(() => _isVideoInitialized = true);
@@ -517,8 +629,25 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
   }
 
   void _toggleLike() async {
-    setState(() => _isLiked = !_isLiked);
-    await _storage.toggleLike(widget.post.id, _isLiked);
+    final currentUserId = _auth.currentUser?.uid;
+    if (currentUserId == null) return;
+
+    final newVal = !_isLiked;
+    setState(() => _isLiked = newVal);
+    await _storage.toggleLike(widget.post.id, newVal);
+
+    final postRef = _firestore.collection('posts').doc(widget.post.id);
+    if (newVal) {
+      await postRef.update({
+        'likesCount': FieldValue.increment(1),
+        'likedBy': FieldValue.arrayUnion([currentUserId]),
+      });
+    } else {
+      await postRef.update({
+        'likesCount': FieldValue.increment(-1),
+        'likedBy': FieldValue.arrayRemove([currentUserId]),
+      });
+    }
   }
 
   void _toggleSave() async {
@@ -527,13 +656,48 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
   }
 
   void _toggleFollow() async {
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUid == null) return;
+    final targetUid = widget.post.userId;
+
     setState(() => _isFollowing = !_isFollowing);
-    await _storage.toggleFollow(widget.post.username, _isFollowing);
+    await _storage.toggleFollow(targetUid, _isFollowing);
+
+    if (_isFollowing) {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(currentUid)
+          .collection('following')
+          .doc(targetUid)
+          .set({'followedAt': FieldValue.serverTimestamp()});
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(targetUid)
+          .collection('followers')
+          .doc(currentUid)
+          .set({'followedAt': FieldValue.serverTimestamp()});
+    } else {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(currentUid)
+          .collection('following')
+          .doc(targetUid)
+          .delete();
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(targetUid)
+          .collection('followers')
+          .doc(currentUid)
+          .delete();
+    }
+
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(_isFollowing
-            ? 'Following ${widget.post.username}'
-            : 'Unfollowed ${widget.post.username}'),
+        content: Text(
+          _isFollowing
+              ? '${context.tr('following')} ${widget.post.username}'   // ✅
+              : '${context.tr('unfollowed')} ${widget.post.username}', // ✅
+        ),
         duration: const Duration(seconds: 2),
       ));
     }
@@ -541,58 +705,187 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
 
   void _navigateToProfile() {
     Navigator.push(
-        context,
-        MaterialPageRoute(
-            builder: (_) => UserProfileScreen(
-                username: widget.post.username,
-                avatarUrl: widget.post.avatarUrl)));
+      context,
+      MaterialPageRoute(
+        builder: (_) => UserProfileScreen(
+          userId: widget.post.userId,
+          username: widget.post.username,
+          avatarUrl: widget.post.avatarUrl,
+        ),
+      ),
+    );
   }
 
   void _showMoreOptions(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final currentUserId = _auth.currentUser?.uid;
+    final isOwner = currentUserId == widget.post.userId;
+
     showModalBottomSheet(
       context: context,
       backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.white,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.only(top: 8, bottom: 16),
-              decoration: BoxDecoration(
-                  color: isDark ? Colors.grey[600] : Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2)),
-            ),
-            _buildOptionTile(Icons.save_alt, 'Save', () {
-              Navigator.pop(context);
-              _toggleSave();
-            }),
-            _buildOptionTile(Icons.copy, 'Copy Link', () {
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Link copied!')));
-            }),
-            _buildOptionTile(Icons.share, 'Share to...', () {
-              Navigator.pop(context);
-              Share.share('Check out this amazing post!');
-            }),
-            _buildOptionTile(
-                Icons.notifications_off,
-                'Turn off notifications for ${widget.post.username}',
-                    () => Navigator.pop(context)),
-            _buildOptionTile(
-                Icons.hide_image, 'Hide', () => Navigator.pop(context)),
-            _buildOptionTile(Icons.flag, 'Report', () => Navigator.pop(context),
-                iconColor: Colors.red, textColor: Colors.red),
-            _buildOptionTile(
-                Icons.cancel, 'Cancel', () => Navigator.pop(context)),
-          ],
-        ),
-      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return StreamBuilder<DocumentSnapshot>(
+              stream: _firestore
+                  .collection('posts')
+                  .doc(widget.post.id)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                final data = snapshot.hasData && snapshot.data!.exists
+                    ? snapshot.data!.data() as Map<String, dynamic>
+                    : <String, dynamic>{};
+
+                final hideLikes = data['hideLikeCount'] ?? false;
+                final commentsDisabled = data['turnOffCommenting'] ?? false;
+                final hideShareCount = data['hideShareCount'] ?? false;
+
+                return SafeArea(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 4,
+                        margin: const EdgeInsets.only(top: 8, bottom: 16),
+                        decoration: BoxDecoration(
+                            color: isDark
+                                ? Colors.grey[600]
+                                : Colors.grey[300],
+                            borderRadius: BorderRadius.circular(2)),
+                      ),
+
+                      if (isOwner) ...[
+                        // 1. Hide Like Count ✅ TRANSLATED
+                        ListTile(
+                          leading: Icon(
+                            hideLikes ? Icons.favorite : Icons.favorite_border,
+                            color: hideLikes
+                                ? Colors.red
+                                : (isDark ? Colors.white : Colors.black87),
+                          ),
+                          title: Text(
+                            hideLikes
+                                ? context.tr('show_like_count')
+                                : context.tr('hide_like_count'),
+                            style: TextStyle(
+                                color: isDark ? Colors.white : Colors.black87),
+                          ),
+                          trailing: Switch(
+                            value: hideLikes,
+                            activeColor: const Color(0xFF0095F6),
+                            onChanged: (_) async {
+                              await _firestore
+                                  .collection('posts')
+                                  .doc(widget.post.id)
+                                  .update({'hideLikeCount': !hideLikes});
+                            },
+                          ),
+                        ),
+
+                        // 2. Turn Off Comments ✅ TRANSLATED
+                        ListTile(
+                          leading: Icon(
+                            commentsDisabled
+                                ? Icons.chat_bubble
+                                : Icons.chat_bubble_outline,
+                            color: commentsDisabled
+                                ? Colors.orange
+                                : (isDark ? Colors.white : Colors.black87),
+                          ),
+                          title: Text(
+                            commentsDisabled
+                                ? context.tr('turn_on_comments')
+                                : context.tr('turn_off_comments'),
+                            style: TextStyle(
+                                color: isDark ? Colors.white : Colors.black87),
+                          ),
+                          trailing: Switch(
+                            value: commentsDisabled,
+                            activeColor: Colors.orange,
+                            onChanged: (_) async {
+                              await _firestore
+                                  .collection('posts')
+                                  .doc(widget.post.id)
+                                  .update(
+                                  {'turnOffCommenting': !commentsDisabled});
+                            },
+                          ),
+                        ),
+
+                        // 3. Hide Share Count ✅ TRANSLATED
+                        ListTile(
+                          leading: Icon(
+                            hideShareCount
+                                ? Icons.share
+                                : Icons.share_outlined,
+                            color: hideShareCount
+                                ? Colors.blue
+                                : (isDark ? Colors.white : Colors.black87),
+                          ),
+                          title: Text(
+                            hideShareCount
+                                ? context.tr('show_share_count')
+                                : context.tr('hide_share_count'),
+                            style: TextStyle(
+                                color: isDark ? Colors.white : Colors.black87),
+                          ),
+                          trailing: Switch(
+                            value: hideShareCount,
+                            activeColor: Colors.blue,
+                            onChanged: (_) async {
+                              await _firestore
+                                  .collection('posts')
+                                  .doc(widget.post.id)
+                                  .update(
+                                  {'hideShareCount': !hideShareCount});
+                            },
+                          ),
+                        ),
+
+                        Divider(
+                            color: isDark
+                                ? Colors.grey[700]
+                                : Colors.grey[300]),
+                      ],
+
+                      // ─── Options sab ke liye ✅ TRANSLATED ───
+                      _buildOptionTile(Icons.save_alt, context.tr('save'), () {
+                        Navigator.pop(context);
+                        _toggleSave();
+                      }),
+                      _buildOptionTile(Icons.copy, context.tr('copy_link'), () {
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text(context.tr('link_copied'))));
+                      }),
+                      _buildOptionTile(Icons.share, context.tr('share_to'), () {
+                        Navigator.pop(context);
+                        Share.share(
+                            '${context.tr('check_out_post')} ${widget.post.username}!');
+                      }),
+                      _buildOptionTile(
+                          Icons.notifications_off,
+                          '${context.tr('turn_off_notifications')} ${widget.post.username}',
+                              () => Navigator.pop(context)),
+                      _buildOptionTile(Icons.hide_image, context.tr('hide_post'),
+                              () => Navigator.pop(context)),
+                      _buildOptionTile(Icons.flag, context.tr('report'),
+                              () => Navigator.pop(context),
+                          iconColor: Colors.red, textColor: Colors.red),
+                      _buildOptionTile(Icons.cancel, context.tr('cancel'),
+                              () => Navigator.pop(context)),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
     );
   }
 
@@ -625,207 +918,312 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Container(
-      color: isDark ? const Color(0xFF121212) : Colors.white,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            child: Row(
-              children: [
-                GestureDetector(
-                  onTap: _navigateToProfile,
-                  child: Container(
-                    width: 42,
-                    height: 42,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border:
-                      Border.all(color: const Color(0xFFDD2A7B), width: 2),
-                    ),
-                    child: ClipOval(
-                      child: Image.network(widget.post.avatarUrl,
-                          fit: BoxFit.cover,
-                          headers: const {
-                            'User-Agent':
-                            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                          },
-                          errorBuilder: (_, __, ___) =>
-                          const Icon(Icons.person)),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Row(
-                    children: [
-                      GestureDetector(
-                        onTap: _navigateToProfile,
-                        child: Text(widget.post.username,
-                            style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 14,
-                                color: isDark ? Colors.white : Colors.black)),
-                      ),
-                      const SizedBox(width: 8),
-                      if (!_isFollowing)
-                        GestureDetector(
-                          onTap: _toggleFollow,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 6),
-                            decoration: BoxDecoration(
-                                color: const Color(0xFF0095F6),
-                                borderRadius: BorderRadius.circular(4)),
-                            child: const Text('Follow',
-                                style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600)),
-                          ),
-                        )
-                      else
-                        GestureDetector(
-                          onTap: _toggleFollow,
-                          child: Row(children: [
-                            const Icon(Icons.check,
-                                size: 16, color: Colors.grey),
-                            const SizedBox(width: 4),
-                            Text('Following',
-                                style: TextStyle(
-                                    color: Colors.grey[600], fontSize: 12)),
-                          ]),
+
+    return StreamBuilder<DocumentSnapshot>(
+      stream: _firestore.collection('posts').doc(widget.post.id).snapshots(),
+      builder: (context, snapshot) {
+        final data = snapshot.hasData && snapshot.data!.exists
+            ? snapshot.data!.data() as Map<String, dynamic>
+            : <String, dynamic>{};
+
+        final hideLikes = data['hideLikeCount'] ?? widget.post.hideLikes;
+        final commentsDisabled =
+            data['turnOffCommenting'] ?? widget.post.commentsDisabled;
+        final hideShareCount =
+            data['hideShareCount'] ?? widget.post.hideShareCount;
+        final likesCount = data['likesCount'] ?? widget.post.likesCount;
+        final shareCount = data['shareCount'] ?? 0;
+
+        return Container(
+          color: isDark ? const Color(0xFF121212) : Colors.white,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ─── Header ───────────────────────────────────────
+              Padding(
+                padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: Row(
+                  children: [
+                    GestureDetector(
+                      onTap: _navigateToProfile,
+                      child: Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                              color: const Color(0xFFDD2A7B), width: 2),
                         ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                    icon: Icon(Icons.more_vert,
-                        color: isDark ? Colors.white : Colors.black),
-                    onPressed: () => _showMoreOptions(context)),
-              ],
-            ),
-          ),
-
-          GestureDetector(
-            onDoubleTap: _toggleLike,
-            child: Container(
-              width: double.infinity,
-              constraints: const BoxConstraints(maxHeight: 400),
-              child: widget.post.isVideo && _isVideoInitialized
-                  ? AspectRatio(
-                  aspectRatio: _videoController!.value.aspectRatio,
-                  child: VideoPlayer(_videoController!))
-                  : Image.network(widget.post.postImageUrl,
-                  fit: BoxFit.cover,
-                  loadingBuilder: (_, child, progress) {
-                    if (progress == null) return child;
-                    return Container(
-                        height: 400,
-                        color: Colors.grey[300],
-                        child: const Center(
-                            child: CircularProgressIndicator()));
-                  },
-                  errorBuilder: (_, __, ___) => Container(
-                      height: 400,
-                      color: Colors.grey[300],
-                      child: const Icon(Icons.error))),
-            ),
-          ),
-
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            child: Row(
-              children: [
-                GestureDetector(
-                  onTap: _toggleLike,
-                  child: AnimatedScale(
-                    scale: _isLiked ? 1.2 : 1.0,
-                    duration: const Duration(milliseconds: 200),
-                    child: Icon(
-                      _isLiked ? Icons.favorite : Icons.favorite_border,
-                      color: _isLiked
-                          ? Colors.red
-                          : (isDark ? Colors.white : Colors.black),
-                      size: 28,
+                        child: ClipOval(
+                          child: Image.network(widget.post.avatarUrl,
+                              fit: BoxFit.cover,
+                              headers: const {
+                                'User-Agent':
+                                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                              },
+                              errorBuilder: (_, __, ___) =>
+                              const Icon(Icons.person)),
+                        ),
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Row(
+                        children: [
+                          GestureDetector(
+                            onTap: _navigateToProfile,
+                            child: Text(widget.post.username,
+                                style: TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14,
+                                    color: isDark
+                                        ? Colors.white
+                                        : Colors.black)),
+                          ),
+                          const SizedBox(width: 8),
+                          if (!_isFollowing)
+                            GestureDetector(
+                              onTap: _toggleFollow,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                    color: const Color(0xFF0095F6),
+                                    borderRadius: BorderRadius.circular(4)),
+                                child: Text(
+                                  context.tr('follow'), // ✅ TRANSLATED
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                            )
+                          else
+                            GestureDetector(
+                              onTap: _toggleFollow,
+                              child: Row(children: [
+                                const Icon(Icons.check,
+                                    size: 16, color: Colors.grey),
+                                const SizedBox(width: 4),
+                                Text(
+                                  context.tr('following'), // ✅ TRANSLATED
+                                  style: TextStyle(
+                                      color: Colors.grey[600], fontSize: 12),
+                                ),
+                              ]),
+                            ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                        icon: Icon(Icons.more_vert,
+                            color: isDark ? Colors.white : Colors.black),
+                        onPressed: () => _showMoreOptions(context)),
+                  ],
                 ),
-                const SizedBox(width: 16),
-                GestureDetector(
-                  onTap: () {
-                    Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => CommentsScreen(
-                                postId: widget.post.id,
-                                postUsername: widget.post.username,
-                                currentUserAvatar:
-                                'https://i.pravatar.cc/150?img=10',
-                                currentUsername: 'You')));
-                  },
-                  child: Icon(Icons.chat_bubble_outline,
-                      color: isDark ? Colors.white : Colors.black, size: 26),
-                ),
-                const SizedBox(width: 16),
-                GestureDetector(
-                  onTap: () => Share.share(
-                      'Check out this post by ${widget.post.username}!'),
-                  child: Icon(Icons.send,
-                      color: isDark ? Colors.white : Colors.black, size: 26),
-                ),
-                const Spacer(),
-                GestureDetector(
-                  onTap: _toggleSave,
-                  child: Icon(
-                    _isSaved ? Icons.bookmark : Icons.bookmark_border,
-                    color: isDark ? Colors.white : Colors.black,
-                    size: 28,
-                  ),
-                ),
-              ],
-            ),
-          ),
+              ),
 
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text('${widget.post.likes} likes',
-                style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                    color: isDark ? Colors.white : Colors.black)),
-          ),
-          const SizedBox(height: 6),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: RichText(
-              text: TextSpan(children: [
-                TextSpan(
-                    text: '${widget.post.username} ',
+              // ─── Post Image / Video ───────────────────────────
+              GestureDetector(
+                onDoubleTap: _toggleLike,
+                child: Container(
+                  width: double.infinity,
+                  constraints: const BoxConstraints(maxHeight: 400),
+                  child: widget.post.isVideo && _isVideoInitialized
+                      ? AspectRatio(
+                      aspectRatio: _videoController!.value.aspectRatio,
+                      child: VideoPlayer(_videoController!))
+                      : Image.network(widget.post.postImageUrl,
+                      fit: BoxFit.cover,
+                      loadingBuilder: (_, child, progress) {
+                        if (progress == null) return child;
+                        return Container(
+                            height: 400,
+                            color: Colors.grey[300],
+                            child: const Center(
+                                child: CircularProgressIndicator()));
+                      },
+                      errorBuilder: (_, __, ___) => Container(
+                          height: 400,
+                          color: Colors.grey[300],
+                          child: const Icon(Icons.error))),
+                ),
+              ),
+
+              // ─── Action Buttons Row ───────────────────────────
+              Padding(
+                padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: Row(
+                  children: [
+                    GestureDetector(
+                      onTap: _toggleLike,
+                      child: AnimatedScale(
+                        scale: _isLiked ? 1.2 : 1.0,
+                        duration: const Duration(milliseconds: 200),
+                        child: Icon(
+                          _isLiked ? Icons.favorite : Icons.favorite_border,
+                          color: _isLiked
+                              ? Colors.red
+                              : (isDark ? Colors.white : Colors.black),
+                          size: 28,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+
+                    // Comment button ✅
+                    GestureDetector(
+                      onTap: commentsDisabled
+                          ? () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                                context.tr('comments_turned_off_post')), // ✅
+                            duration: const Duration(seconds: 2),
+                          ),
+                        );
+                      }
+                          : () {
+                        Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => CommentsScreen(
+                                    postId: widget.post.id,
+                                    postUsername: widget.post.username,
+                                    currentUserAvatar:
+                                    _auth.currentUser?.photoURL ?? '',
+                                    currentUsername:
+                                    _auth.currentUser?.displayName ??
+                                        context.tr('you'))));  // ✅
+                      },
+                      child: Icon(
+                        commentsDisabled
+                            ? Icons.chat_bubble
+                            : Icons.chat_bubble_outline,
+                        color: commentsDisabled
+                            ? Colors.grey
+                            : (isDark ? Colors.white : Colors.black),
+                        size: 26,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+
+                    // Share button ✅
+                    GestureDetector(
+                      onTap: () async {
+                        await Share.share(
+                            '${context.tr('check_out_post')} ${widget.post.username}!');
+                        await _firestore
+                            .collection('posts')
+                            .doc(widget.post.id)
+                            .update({'shareCount': FieldValue.increment(1)});
+                      },
+                      child: Icon(Icons.send,
+                          color: isDark ? Colors.white : Colors.black,
+                          size: 26),
+                    ),
+
+                    const Spacer(),
+                    GestureDetector(
+                      onTap: _toggleSave,
+                      child: Icon(
+                        _isSaved ? Icons.bookmark : Icons.bookmark_border,
+                        color: isDark ? Colors.white : Colors.black,
+                        size: 28,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // ─── Like Count ✅ TRANSLATED ─────────────────────
+              if (!hideLikes)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    '$likesCount ${context.tr('likes')}',
                     style: TextStyle(
                         fontWeight: FontWeight.w600,
                         fontSize: 14,
-                        color: isDark ? Colors.white : Colors.black)),
-                ..._buildCaptionWithHashtags(widget.post.caption),
-              ]),
-            ),
+                        color: isDark ? Colors.white : Colors.black),
+                  ),
+                ),
+
+              const SizedBox(height: 6),
+
+              // ─── Caption ─────────────────────────────────────
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: RichText(
+                  text: TextSpan(children: [
+                    TextSpan(
+                        text: '${widget.post.username} ',
+                        style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                            color: isDark ? Colors.white : Colors.black)),
+                    ..._buildCaptionWithHashtags(widget.post.caption),
+                  ]),
+                ),
+              ),
+              const SizedBox(height: 6),
+
+              // ─── Comments ✅ TRANSLATED ───────────────────────
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: commentsDisabled
+                    ? Text(
+                  context.tr('comments_turned_off'), // ✅
+                  style:
+                  TextStyle(color: Colors.grey[500], fontSize: 14),
+                )
+                    : GestureDetector(
+                  onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => CommentsScreen(
+                              postId: widget.post.id,
+                              postUsername: widget.post.username,
+                              currentUserAvatar:
+                              _auth.currentUser?.photoURL ?? '',
+                              currentUsername:
+                              _auth.currentUser?.displayName ??
+                                  context.tr('you')))), // ✅
+                  child: Text(
+                    '${context.tr('view_all_comments_count')} ${data['commentsCount'] ?? widget.post.commentsCount} ${context.tr('comments')}', // ✅
+                    style:
+                    TextStyle(color: Colors.grey[600], fontSize: 14),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+
+              // ─── Share Count ✅ TRANSLATED ────────────────────
+              if (!hideShareCount && shareCount > 0)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    '$shareCount ${context.tr('shares')}', // ✅
+                    style:
+                    TextStyle(color: Colors.grey[600], fontSize: 13),
+                  ),
+                ),
+
+              // ─── Time ────────────────────────────────────────
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(widget.post.time.toUpperCase(),
+                    style:
+                    TextStyle(color: Colors.grey[500], fontSize: 10)),
+              ),
+              const SizedBox(height: 12),
+            ],
           ),
-          const SizedBox(height: 6),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text('View all ${widget.post.comments} comments',
-                style: TextStyle(color: Colors.grey[600], fontSize: 14)),
-          ),
-          const SizedBox(height: 6),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(widget.post.time.toUpperCase(),
-                style: TextStyle(color: Colors.grey[500], fontSize: 10)),
-          ),
-          const SizedBox(height: 12),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -833,28 +1231,72 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
 // ─────────────────────────────────────────────────────────────
 class Post {
   final String id;
+  final String userId;
   final String avatarUrl;
   final String username;
   final String time;
   final String postImageUrl;
-  final String likes;
-  final String comments;
+  final int likesCount;
+  final int commentsCount;
   final bool isVideo;
+  final String? videoUrl;
   final String caption;
-  final List<String> hashtags;
   final bool isLarge;
+  final bool hideLikes;
+  final bool commentsDisabled;
+  final bool hideShareCount;
 
   Post({
     required this.id,
+    required this.userId,
     required this.avatarUrl,
     required this.username,
     required this.time,
     required this.postImageUrl,
-    required this.likes,
-    required this.comments,
+    required this.likesCount,
+    required this.commentsCount,
     this.isVideo = false,
+    this.videoUrl,
     this.caption = '',
-    this.hashtags = const [],
-    required this.isLarge,
+    this.isLarge = true,
+    this.hideLikes = false,
+    this.commentsDisabled = false,
+    this.hideShareCount = false,
   });
+
+  factory Post.fromFirestore(String docId, Map<String, dynamic> data) {
+    final timestamp = data['timestamp'];
+    String timeStr = '';
+    if (timestamp != null && timestamp is Timestamp) {
+      final diff = DateTime.now().difference(timestamp.toDate());
+      // ⚠️ NOTE: time strings yahan context nahi hai isliye
+      // inhe screen par show karte waqt tr() se format karo
+      // ya AppTranslations.translate() directly call karo
+      if (diff.inDays > 0) {
+        timeStr = '${diff.inDays}d';
+      } else if (diff.inHours > 0) {
+        timeStr = '${diff.inHours}h';
+      } else {
+        timeStr = '${diff.inMinutes}m';
+      }
+    }
+
+    return Post(
+      id: docId,
+      userId: data['authorid'] ?? '',
+      username: data['username'] ?? 'Unknown',
+      avatarUrl: data['photoUrl'] ?? '',
+      postImageUrl: data['imageUrl'] ?? '',
+      caption: data['text'] ?? '',
+      likesCount: (data['likesCount'] ?? 0) as int,
+      commentsCount: (data['commentsCount'] ?? 0) as int,
+      isVideo: data['isVideo'] ?? false,
+      videoUrl: data['videoUrl'],
+      time: timeStr,
+      isLarge: true,
+      hideLikes: data['hideLikeCount'] ?? false,
+      commentsDisabled: data['turnOffCommenting'] ?? false,
+      hideShareCount: data['hideShareCount'] ?? false,
+    );
+  }
 }

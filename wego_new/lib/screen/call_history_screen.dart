@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:wego_marriage/screen/voice_call_screen.dart';
 import 'package:wego_marriage/screen/video_call_screen.dart';
-
+import 'app_localizations.dart';
+import 'app_translations.dart';
 enum CallType { voice, video }
 enum CallStatus { incoming, outgoing, missed }
 

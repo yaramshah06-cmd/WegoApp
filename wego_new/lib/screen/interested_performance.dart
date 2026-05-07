@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:wego_marriage/screen/home_feed_screen.dart';
-
+import 'app_localizations.dart';
+import 'app_translations.dart';
 class InterestsScreen extends StatefulWidget {
   final Map<String, dynamic> userInfo; // Ye line add karein
 

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'app_localizations.dart';
+import 'app_translations.dart';
 
 class ProfileEditScreen extends StatefulWidget {
   const ProfileEditScreen({super.key});
@@ -56,10 +58,11 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
 
   void _updateProfile() {
     final email = _emailController.text.trim();
+
     if (email.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter your email'),
+        SnackBar(
+          content: Text(context.tr('email_empty')), // ✅
           backgroundColor: Colors.red,
         ),
       );
@@ -69,8 +72,8 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
     if (!emailRegex.hasMatch(email)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter a valid email address'),
+        SnackBar(
+          content: Text(context.tr('email_invalid')), // ✅
           backgroundColor: Colors.red,
         ),
       );
@@ -79,9 +82,9 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
 
     // TODO: Add your update logic here
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Profile updated successfully!'),
-        backgroundColor: Color(0xFF4A6CF7),
+      SnackBar(
+        content: Text(context.tr('profile_updated')), // ✅
+        backgroundColor: const Color(0xFF4A6CF7),
       ),
     );
   }
@@ -97,11 +100,14 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         elevation: 0,
         leading: IconButton(
-          icon: Icon(Icons.arrow_back_ios, color: isDark ? Colors.white : const Color(0xFF4A6CF7)),
+          icon: Icon(
+            Icons.arrow_back_ios,
+            color: isDark ? Colors.white : const Color(0xFF4A6CF7),
+          ),
           onPressed: () => Navigator.of(context).pop(),
         ),
         title: Text(
-          'Profile',
+          context.tr('profile'), // ✅
           style: TextStyle(
             color: isDark ? Colors.white : const Color(0xFF4A6CF7),
             fontWeight: FontWeight.bold,
@@ -156,11 +162,11 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
             const SizedBox(height: 32),
 
             // Full Name
-            _buildLabel('Full Name', textColor),
+            _buildLabel(context.tr('full_name'), textColor), // ✅
             const SizedBox(height: 8),
             _buildTextField(
               controller: _nameController,
-              hint: 'Enter full name',
+              hint: context.tr('enter_full_name'), // ✅
               keyboardType: TextInputType.name,
               textColor: textColor,
               isDark: isDark,
@@ -169,7 +175,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
             const SizedBox(height: 20),
 
             // Phone Number
-            _buildLabel('Phone Number', textColor),
+            _buildLabel(context.tr('phone_number'), textColor), // ✅
             const SizedBox(height: 8),
             _buildTextField(
               controller: _phoneController,
@@ -182,11 +188,11 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
             const SizedBox(height: 20),
 
             // Email
-            _buildLabel('Email', textColor),
+            _buildLabel(context.tr('email'), textColor), // ✅
             const SizedBox(height: 8),
             _buildTextField(
               controller: _emailController,
-              hint: 'example@email.com',
+              hint: context.tr('enter_email'), // ✅
               keyboardType: TextInputType.emailAddress,
               textColor: textColor,
               isDark: isDark,
@@ -195,14 +201,14 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
             const SizedBox(height: 20),
 
             // Date of Birth
-            _buildLabel('Date Of Birth', textColor),
+            _buildLabel(context.tr('date_of_birth'), textColor), // ✅
             const SizedBox(height: 8),
             GestureDetector(
               onTap: _selectDate,
               child: AbsorbPointer(
                 child: _buildTextField(
                   controller: _dobController,
-                  hint: 'DD / MM / YYY',
+                  hint: context.tr('enter_date'), // ✅
                   keyboardType: TextInputType.datetime,
                   hintColor: const Color(0xFF4A6CF7),
                   textColor: textColor,
@@ -231,9 +237,9 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                   ),
                   elevation: 0,
                 ),
-                child: const Text(
-                  'Update Profile',
-                  style: TextStyle(
+                child: Text(
+                  context.tr('update_profile'), // ✅
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
@@ -272,16 +278,16 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     return TextField(
       controller: controller,
       keyboardType: keyboardType,
-      style: TextStyle(
-        fontSize: 14,
-        color: textColor,
-      ),
+      style: TextStyle(fontSize: 14, color: textColor),
       decoration: InputDecoration(
         hintText: hint,
-        hintStyle: TextStyle(color: isDark ? Colors.white60 : hintColor, fontSize: 14),
+        hintStyle: TextStyle(
+            color: isDark ? Colors.white60 : hintColor, fontSize: 14),
         suffixIcon: suffixIcon,
         filled: true,
-        fillColor: isDark ? Colors.white.withValues(alpha: 0.1) : const Color(0xFFF0F2FF),
+        fillColor: isDark
+            ? Colors.white.withValues(alpha: 0.1)
+            : const Color(0xFFF0F2FF),
         contentPadding:
         const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
         border: OutlineInputBorder(

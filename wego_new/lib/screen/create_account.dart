@@ -5,6 +5,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:geolocator/geolocator.dart'; // ✅ Real GPS location
 import 'otp_screen.dart';
 import 'package:wego_marriage/screen/user_gendar.dart';
 import 'package:wego_marriage/screen/home_feed_screen.dart';
@@ -23,7 +24,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _mobileController = TextEditingController();
-  final TextEditingController _dobController = TextEditingController();
+  final TextEditingController _ageController = TextEditingController();
 
   bool _obscurePassword = true;
   bool _isLoading = false;
@@ -41,7 +42,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
     _passwordController.dispose();
     _emailController.dispose();
     _mobileController.dispose();
-    _dobController.dispose();
+    _ageController.dispose();
     super.dispose();
   }
 
@@ -63,20 +64,76 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
   }
 
   // ══════════════════════════════════════════════════════════════
-  // ✅ NEW: Migrate user from old 'user' collection to 'users'
+  // ✅ Real GPS Location fetch karna
+  // ══════════════════════════════════════════════════════════════
+  Future<Map<String, double>> _getRealLocation() async {
+    // Default fallback — sirf tab use hoga jab permission deny ho
+    const double fallbackLat = 0.0;
+    const double fallbackLng = 0.0;
+
+    try {
+      // 1. Location service check
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        debugPrint('⚠️ Location services are disabled.');
+        return {'latitude': fallbackLat, 'longitude': fallbackLng};
+      }
+
+      // 2. Permission check
+      LocationPermission permission = await Geolocator.checkPermission();
+
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          debugPrint('⚠️ Location permission denied.');
+          return {'latitude': fallbackLat, 'longitude': fallbackLng};
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        debugPrint('⚠️ Location permission permanently denied.');
+        // User ko settings mein jaana hoga
+        if (mounted) {
+          _showError(
+            'Location permission permanently denied. Please enable it from app settings.',
+          );
+        }
+        return {'latitude': fallbackLat, 'longitude': fallbackLng};
+      }
+
+      // 3. Real location fetch
+      final Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 10),
+      );
+
+      debugPrint(
+        '✅ Real location: lat=${position.latitude}, lng=${position.longitude}',
+      );
+
+      return {
+        'latitude': position.latitude,
+        'longitude': position.longitude,
+      };
+    } catch (e) {
+      debugPrint('Location error: $e');
+      return {'latitude': fallbackLat, 'longitude': fallbackLng};
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // ✅ Migrate user from old 'user' collection to 'users'
   // ══════════════════════════════════════════════════════════════
   Future<void> _migrateUserIfNeeded(String uid) async {
     try {
-      // Check karo 'users' mein hai ya nahi
       final newDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(uid)
           .get();
 
       if (!newDoc.exists) {
-        // Purani 'user' collection se data lo
         final oldDoc = await FirebaseFirestore.instance
-            .collection('user') // singular — purani collection
+            .collection('user')
             .doc(uid)
             .get();
 
@@ -84,11 +141,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
           final data = oldDoc.data()!;
           final fullName = data['fullName'] ?? '';
 
-          // Naye 'users' collection mein save karo
-          await FirebaseFirestore.instance
-              .collection('users')
-              .doc(uid)
-              .set({
+          await FirebaseFirestore.instance.collection('users').doc(uid).set({
             ...data,
             'username': fullName,
             'username_lower': fullName.toString().toLowerCase(),
@@ -120,31 +173,6 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
     }
   }
 
-  Future<void> _selectDate() async {
-    DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime(2000),
-      firstDate: DateTime(1900),
-      lastDate: DateTime.now(),
-      builder: (context, child) {
-        return Theme(
-          data: ThemeData.light().copyWith(
-            colorScheme: const ColorScheme.light(primary: Color(0xFF4040FF)),
-          ),
-          child: child!,
-        );
-      },
-    );
-    if (picked != null) {
-      setState(() {
-        _dobController.text =
-        "${picked.day.toString().padLeft(2, '0')} / "
-            "${picked.month.toString().padLeft(2, '0')} / "
-            "${picked.year}";
-      });
-    }
-  }
-
   void _showError(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -165,7 +193,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
     required String fullName,
     required String email,
     required String mobileNumber,
-    required String dateOfBirth,
+    required int age,
     required String provider,
     String photoUrl = '',
   }) async {
@@ -173,23 +201,27 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
       final username = fullName.trim();
       final usernameLower = username.toLowerCase();
 
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .set({
+      // ✅ Real GPS location fetch karo
+      final location = await _getRealLocation();
+
+      await FirebaseFirestore.instance.collection('users').doc(uid).set({
         'fullName': fullName,
         'username': username,
         'username_lower': usernameLower,
         'email': email,
         'mobileNumber': mobileNumber,
-        'dateOfBirth': dateOfBirth,
+        'age': age,
         'photoUrl': photoUrl,
         'bio': '',
         'uid': uid,
         'provider': provider,
         'createdAt': FieldValue.serverTimestamp(),
         'lastLogin': FieldValue.serverTimestamp(),
+        // ✅ Real location — har user ki apni actual GPS location
+        'latitude': location['latitude'],
+        'longitude': location['longitude'],
       }, SetOptions(merge: true));
+
       return true;
     } catch (e) {
       _showError('Failed to save data: ${e.toString()}');
@@ -283,8 +315,10 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
   Future<void> _signInWithGoogle() async {
     setState(() => _isLoading = true);
     try {
-      final GoogleSignIn googleSignIn =
-      GoogleSignIn(scopes: ['email', 'profile']);
+      // NAYA — sahi
+      final GoogleSignIn googleSignIn = GoogleSignIn(
+        scopes: ['email', 'profile'],
+      );
       await googleSignIn.signOut();
 
       final GoogleSignInAccount? googleUser = await googleSignIn.signIn();
@@ -311,7 +345,6 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
       await FirebaseAuth.instance.signInWithCredential(credential);
       final user = userCredential.user!;
 
-      // ✅ Migration check karo login ke baad
       await _migrateUserIfNeeded(user.uid);
 
       setState(() => _isLoading = false);
@@ -319,10 +352,16 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
       final bool alreadyExists = await _checkUserExistsInFirestore(user.uid);
 
       if (alreadyExists) {
+        // ✅ Real location se lastLogin aur location update karo
+        final location = await _getRealLocation();
         await FirebaseFirestore.instance
             .collection('users')
             .doc(user.uid)
-            .update({'lastLogin': FieldValue.serverTimestamp()});
+            .update({
+          'lastLogin': FieldValue.serverTimestamp(),
+          'latitude': location['latitude'],
+          'longitude': location['longitude'],
+        });
 
         _showSuccess('Welcome back ${user.displayName ?? 'User'}!');
         _navigateToHome();
@@ -347,7 +386,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
         fullName: user.displayName ?? '',
         email: user.email ?? '',
         mobileNumber: user.phoneNumber ?? '',
-        dateOfBirth: '',
+        age: 0,
         provider: 'google',
         photoUrl: user.photoURL ?? '',
       );
@@ -413,7 +452,6 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
       final String fbPhoto =
           userData['picture']?['data']?['url'] ?? user.photoURL ?? '';
 
-      // ✅ Migration check karo Facebook login ke baad bhi
       await _migrateUserIfNeeded(user.uid);
 
       setState(() => _isLoading = false);
@@ -421,12 +459,19 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
       final bool alreadyExists = await _checkUserExistsInFirestore(user.uid);
 
       if (alreadyExists) {
+        // ✅ Real location se update karo
+        final location = await _getRealLocation();
         await FirebaseFirestore.instance
             .collection('users')
             .doc(user.uid)
-            .update({'lastLogin': FieldValue.serverTimestamp()});
+            .update({
+          'lastLogin': FieldValue.serverTimestamp(),
+          'latitude': location['latitude'],
+          'longitude': location['longitude'],
+        });
 
-        _showSuccess('Welcome back ${fbName.isNotEmpty ? fbName : 'User'}!');
+        _showSuccess(
+            'Welcome back ${fbName.isNotEmpty ? fbName : 'User'}!');
         _navigateToHome();
         return;
       }
@@ -449,7 +494,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
         fullName: fbName,
         email: fbEmail,
         mobileNumber: user.phoneNumber ?? '',
-        dateOfBirth: '',
+        age: 0,
         provider: 'facebook',
         photoUrl: fbPhoto,
       );
@@ -497,6 +542,10 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
     }
 
     final String fullName = _fullNameController.text.trim();
+    final int age = int.tryParse(_ageController.text.trim()) ?? 0;
+
+    // ✅ Real location fetch karo OTP se pehle
+    final location = await _getRealLocation();
 
     final Map<String, dynamic> userInfo = {
       'fullName': fullName,
@@ -504,9 +553,12 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
       'username_lower': fullName.toLowerCase(),
       'email': _emailController.text.trim(),
       'mobileNumber': phoneNumber,
-      'dateOfBirth': _dobController.text.trim(),
+      'age': age,
       'password': _passwordController.text.trim(),
       'bio': '',
+      // ✅ Real location — hardcoded Rawalpindi nahi
+      'latitude': location['latitude'],
+      'longitude': location['longitude'],
     };
 
     bool otpSent = false;
@@ -649,8 +701,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        shape:
-        RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Text(
           'Confirm $provider Account',
           style: const TextStyle(
@@ -670,8 +721,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                   ? NetworkImage(photoUrl)
                   : null,
               child: (photoUrl == null || photoUrl.isEmpty)
-                  ? const Icon(Icons.person,
-                  size: 36, color: Color(0xFF4040FF))
+                  ? const Icon(Icons.person, size: 36, color: Color(0xFF4040FF))
                   : null,
             ),
             const SizedBox(height: 12),
@@ -692,8 +742,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child:
-            const Text('Cancel', style: TextStyle(color: Colors.grey)),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
@@ -702,8 +751,8 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12)),
             ),
-            child: const Text('Confirm',
-                style: TextStyle(color: Colors.white)),
+            child:
+            const Text('Confirm', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -805,15 +854,19 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                 },
               ),
               const SizedBox(height: 16),
-              _buildLabel('Date of Birth'),
-              TextFormField(
-                controller: _dobController,
-                readOnly: true,
-                onTap: _selectDate,
-                decoration: _inputDecoration('DD / MM / YYYY'),
-                validator: (val) => (val == null || val.trim().isEmpty)
-                    ? 'Date of birth is required'
-                    : null,
+              _buildLabel('Age'),
+              _buildTextField(
+                controller: _ageController,
+                hint: 'Enter your age (e.g. 25)',
+                keyboardType: TextInputType.number,
+                validator: (val) {
+                  if (val == null || val.trim().isEmpty)
+                    return 'Age is required';
+                  final age = int.tryParse(val.trim());
+                  if (age == null || age < 18 || age > 100)
+                    return 'Please enter a valid age (18–100)';
+                  return null;
+                },
               ),
               const SizedBox(height: 24),
               Center(

@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:wego_marriage/screen/media_editing_screen.dart';
-
+import 'app_localizations.dart';
+import 'app_translations.dart';
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
 

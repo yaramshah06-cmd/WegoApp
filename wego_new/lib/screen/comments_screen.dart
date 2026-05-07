@@ -5,6 +5,8 @@ import 'package:wego_marriage/services/local_storage_service.dart';
 import 'package:wego_marriage/providers/settings_provider.dart';
 import 'package:wego_marriage/screen/user_profile_screen.dart';
 import 'package:wego_marriage/screen/chat_screen.dart';
+import 'app_localizations.dart';
+import 'app_translations.dart';
 
 class CommentsScreen extends StatefulWidget {
   final String postId;
@@ -46,10 +48,8 @@ class _CommentsScreenState extends State<CommentsScreen> {
   void _loadComments() {
     setState(() {
       _comments = _storage.getComments(widget.postId);
-      // Add some dummy comments if no comments exist
       if (_comments.isEmpty) {
         _comments = _getDummyComments();
-        // Save dummy comments
         for (var comment in _comments) {
           _storage.addComment(widget.postId, comment);
         }
@@ -121,7 +121,6 @@ class _CommentsScreenState extends State<CommentsScreen> {
       _commentController.clear();
     });
 
-    // Scroll to top
     _scrollController.animateTo(
       0,
       duration: const Duration(milliseconds: 300),
@@ -137,19 +136,13 @@ class _CommentsScreenState extends State<CommentsScreen> {
 
     setState(() {
       if (!isLiked) {
-        // Liked
         comment.likes++;
-        // Remove dislike if exists
-        if (isDisliked) {
-          comment.dislikes--;
-        }
+        if (isDisliked) comment.dislikes--;
       } else {
-        // Unliked
         comment.likes--;
       }
     });
 
-    // Update in storage
     await _storage.addComment(widget.postId, comment);
   }
 
@@ -161,19 +154,13 @@ class _CommentsScreenState extends State<CommentsScreen> {
 
     setState(() {
       if (!isDisliked) {
-        // Disliked
         comment.dislikes++;
-        // Remove like if exists
-        if (isLiked) {
-          comment.likes--;
-        }
+        if (isLiked) comment.likes--;
       } else {
-        // Undisliked
         comment.dislikes--;
       }
     });
 
-    // Update in storage
     await _storage.addComment(widget.postId, comment);
   }
 
@@ -182,6 +169,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
       context,
       MaterialPageRoute(
         builder: (_) => UserProfileScreen(
+          userId: '',
           username: username,
           avatarUrl: avatarUrl,
         ),
@@ -223,7 +211,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Replying to ${parentComment.username}',
+                  '${context.tr('replying_to')} ${parentComment.username}', // ✅
                   style: const TextStyle(
                     fontWeight: FontWeight.w600,
                     fontSize: 16,
@@ -233,7 +221,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
                 TextField(
                   controller: replyController,
                   decoration: InputDecoration(
-                    hintText: 'Write a reply...',
+                    hintText: context.tr('write_reply'), // ✅
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
@@ -277,7 +265,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
                       ),
                       padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
-                    child: const Text('Reply'),
+                    child: Text(context.tr('reply')), // ✅
                   ),
                 ),
               ],
@@ -288,82 +276,51 @@ class _CommentsScreenState extends State<CommentsScreen> {
     );
   }
 
+  // ✅ AppTranslations.translate() use karo — koi hardcoded map nahi
   void _translateComment(Comment comment) {
     final settings = context.read<SettingsProvider>();
     final targetLanguage = settings.preferredLanguage;
 
     if (comment.isTranslated) {
-      // Show original
       setState(() {
         comment.isTranslated = false;
+        comment.translatedText = null;
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Showing original text')),
+        SnackBar(content: Text(context.tr('showing_original'))), // ✅
       );
     } else {
-      // Translate to user's preferred language
-      final translatedText = _translateText(comment.text, targetLanguage);
+      final langCode = _getLanguageCode(targetLanguage);
+      // ✅ AppTranslations.translate() — same system jo poori app use karti hai
+      final translated = AppTranslations.translate(comment.text, langCode);
+
       setState(() {
         comment.isTranslated = true;
-        comment.translatedText = translatedText;
+        comment.translatedText = translated;
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Translated to $targetLanguage')),
+        SnackBar(
+          content: Text('${context.tr('translated_to')} $targetLanguage'), // ✅
+        ),
       );
     }
   }
 
-  // Simulated translation - In production, use Google Translate API
-  String _translateText(String text, String targetLanguage) {
-    // Common translations for demo
-    final Map<String, Map<String, String>> translations = {
-      'Urdu': {
-        'This is absolutely amazing!': 'یہ بالکل حیرت انگیز ہے!',
-        'Love the vibes': 'ویبز بہت اچھی ہیں',
-        'Beautiful shot! Where was this taken?': 'خوبصورت تصویر! یہ کہاں لی گئی تھی؟',
-        'Thank you! This was taken in Bali': 'شکریہ! یہ بالی میں لی گئی تھی',
-        'Wow, stunning!': 'واہ، زبردست!',
-      },
-      'Hindi': {
-        'This is absolutely amazing!': 'यह बिल्कुल अद्भुत है!',
-        'Love the vibes': 'वाइब्स बहुत अच्छे हैं',
-        'Beautiful shot! Where was this taken?': 'सुंदर फोटो! यह कहाँ ली गई थी?',
-        'Thank you! This was taken in Bali': 'धन्यवाद! यह बाली में ली गई थी',
-        'Wow, stunning!': 'वाह, शानदार!',
-      },
-      'Arabic': {
-        'This is absolutely amazing!': 'هذا مذهل تماما!',
-        'Love the vibes': 'أحب الأجواء',
-        'Beautiful shot! Where was this taken?': 'لقطة جميلة! أين تم التقاطها؟',
-        'Thank you! This was taken in Bali': 'شكراً! تم التقاطها في بالي',
-        'Wow, stunning!': 'واو، رائع!',
-      },
-      'Spanish': {
-        'This is absolutely amazing!': '¡Esto es absolutamente increíble!',
-        'Love the vibes': 'Me encanta el ambiente',
-        'Beautiful shot! Where was this taken?': '¡Hermosa foto! ¿Dónde se tomó?',
-        'Thank you! This was taken in Bali': '¡Gracias! Esto fue tomado en Bali',
-        'Wow, stunning!': '¡Guau, impresionante!',
-      },
-      'French': {
-        'This is absolutely amazing!': 'C\'est absolument incroyable !',
-        'Love the vibes': 'J\'adore l\'ambiance',
-        'Beautiful shot! Where was this taken?': 'Belle photo ! Où a été prise ?',
-        'Thank you! This was taken in Bali': 'Merci ! C\'était pris à Bali',
-        'Wow, stunning!': 'Wow, magnifique !',
-      },
+  String _getLanguageCode(String languageName) {
+    const Map<String, String> codes = {
+      'English': 'en',
+      'Urdu': 'ur',
+      'Hindi': 'hi',
+      'Arabic': 'ar',
+      'Korean': 'ko',
+      'Chinese': 'zh',
+      'Japanese': 'ja',
+      'French': 'fr',
+      'Spanish': 'es',
+      'Turkish': 'tr',
+      'German': 'de',
     };
-
-    // Check if we have a translation for this text
-    if (translations.containsKey(targetLanguage)) {
-      final translated = translations[targetLanguage]![text];
-      if (translated != null) {
-        return translated;
-      }
-    }
-
-    // Fallback: return text with language indicator
-    return '[$targetLanguage] $text';
+    return codes[languageName] ?? 'en';
   }
 
   void _deleteComment(Comment comment) async {
@@ -375,7 +332,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Comment deleted')),
+      SnackBar(content: Text(context.tr('comment_deleted'))), // ✅
     );
   }
 
@@ -397,7 +354,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
-          'Comments',
+          context.tr('comments'), // ✅
           style: TextStyle(
             color: isDark ? Colors.white : Colors.black,
             fontWeight: FontWeight.w600,
@@ -411,13 +368,13 @@ class _CommentsScreenState extends State<CommentsScreen> {
             child: _comments.isEmpty
                 ? _buildEmptyState(isDark)
                 : ListView.builder(
-                    controller: _scrollController,
-                    itemCount: _comments.length,
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    itemBuilder: (context, index) {
-                      return _buildCommentItem(_comments[index], isDark);
-                    },
-                  ),
+              controller: _scrollController,
+              itemCount: _comments.length,
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              itemBuilder: (context, index) {
+                return _buildCommentItem(_comments[index], isDark);
+              },
+            ),
           ),
           _buildCommentInput(isDark),
         ],
@@ -437,7 +394,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
           ),
           const SizedBox(height: 16),
           Text(
-            'No comments yet',
+            context.tr('no_comments_yet'), // ✅
             style: TextStyle(
               color: isDark ? Colors.grey[400] : Colors.grey[600],
               fontSize: 16,
@@ -445,7 +402,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Be the first to comment!',
+            context.tr('be_first_comment'), // ✅
             style: TextStyle(
               color: isDark ? Colors.grey[600] : Colors.grey[400],
               fontSize: 14,
@@ -468,17 +425,15 @@ class _CommentsScreenState extends State<CommentsScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Avatar
               GestureDetector(
-                onTap: () => _navigateToProfile(comment.username, comment.avatarUrl),
+                onTap: () =>
+                    _navigateToProfile(comment.username, comment.avatarUrl),
                 child: CircleAvatar(
                   radius: 18,
                   backgroundImage: NetworkImage(comment.avatarUrl),
                 ),
               ),
               const SizedBox(width: 12),
-
-              // Comment Content
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -488,12 +443,14 @@ class _CommentsScreenState extends State<CommentsScreen> {
                         children: [
                           WidgetSpan(
                             child: GestureDetector(
-                              onTap: () => _navigateToProfile(comment.username, comment.avatarUrl),
+                              onTap: () => _navigateToProfile(
+                                  comment.username, comment.avatarUrl),
                               child: Text(
                                 comment.username,
                                 style: TextStyle(
                                   fontWeight: FontWeight.w600,
-                                  color: isDark ? Colors.white : Colors.black,
+                                  color:
+                                  isDark ? Colors.white : Colors.black,
                                   fontSize: 14,
                                 ),
                               ),
@@ -506,7 +463,8 @@ class _CommentsScreenState extends State<CommentsScreen> {
                             ),
                           ),
                           TextSpan(
-                            text: comment.isTranslated && comment.translatedText != null
+                            text: comment.isTranslated &&
+                                comment.translatedText != null
                                 ? comment.translatedText
                                 : comment.text,
                             style: TextStyle(
@@ -518,8 +476,6 @@ class _CommentsScreenState extends State<CommentsScreen> {
                       ),
                     ),
                     const SizedBox(height: 6),
-
-                    // Time and Actions Row
                     Row(
                       children: [
                         Text(
@@ -530,9 +486,9 @@ class _CommentsScreenState extends State<CommentsScreen> {
                           ),
                         ),
                         const SizedBox(width: 12),
-                        // Message button
                         GestureDetector(
-                          onTap: () => _navigateToChat(comment.username, comment.avatarUrl),
+                          onTap: () => _navigateToChat(
+                              comment.username, comment.avatarUrl),
                           child: Icon(
                             Icons.message_outlined,
                             size: 14,
@@ -541,7 +497,9 @@ class _CommentsScreenState extends State<CommentsScreen> {
                         ),
                         const SizedBox(width: 12),
                         _buildActionButton(
-                          icon: isLiked ? Icons.favorite : Icons.favorite_border,
+                          icon: isLiked
+                              ? Icons.favorite
+                              : Icons.favorite_border,
                           count: comment.likes,
                           onTap: () => _toggleLikeComment(comment),
                           isActive: isLiked,
@@ -549,7 +507,9 @@ class _CommentsScreenState extends State<CommentsScreen> {
                         ),
                         const SizedBox(width: 12),
                         _buildActionButton(
-                          icon: isDisliked ? Icons.thumb_down : Icons.thumb_down_alt_outlined,
+                          icon: isDisliked
+                              ? Icons.thumb_down
+                              : Icons.thumb_down_alt_outlined,
                           count: comment.dislikes,
                           onTap: () => _toggleDislikeComment(comment),
                           isActive: isDisliked,
@@ -559,7 +519,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
                         GestureDetector(
                           onTap: () => _showReplyDialog(comment),
                           child: Text(
-                            'Reply',
+                            context.tr('reply'), // ✅
                             style: TextStyle(
                               color: Colors.grey[600],
                               fontSize: 12,
@@ -568,12 +528,13 @@ class _CommentsScreenState extends State<CommentsScreen> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        // Translate button for comments with text
                         if (comment.text.length > 10)
                           GestureDetector(
                             onTap: () => _translateComment(comment),
                             child: Text(
-                              comment.isTranslated ? 'See original' : 'Translate',
+                              comment.isTranslated
+                                  ? context.tr('see_original')  // ✅
+                                  : context.tr('translate'),    // ✅
                               style: TextStyle(
                                 color: Colors.grey[600],
                                 fontSize: 12,
@@ -581,15 +542,14 @@ class _CommentsScreenState extends State<CommentsScreen> {
                               ),
                             ),
                           ),
-                        // Delete button for own comments
                         if (comment.username == widget.currentUsername)
                           PopupMenuButton<String>(
                             icon: Icon(Icons.more_horiz,
                                 size: 16, color: Colors.grey[600]),
                             itemBuilder: (context) => [
-                              const PopupMenuItem(
+                              PopupMenuItem(
                                 value: 'delete',
-                                child: Text('Delete'),
+                                child: Text(context.tr('delete')), // ✅
                               ),
                             ],
                             onSelected: (value) {
@@ -607,12 +567,13 @@ class _CommentsScreenState extends State<CommentsScreen> {
           ),
         ),
 
-        // Replies
         if (comment.replies.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(left: 52),
             child: Column(
-              children: comment.replies.map((reply) => _buildReplyItem(reply, isDark)).toList(),
+              children: comment.replies
+                  .map((reply) => _buildReplyItem(reply, isDark))
+                  .toList(),
             ),
           ),
 
@@ -630,7 +591,8 @@ class _CommentsScreenState extends State<CommentsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           GestureDetector(
-            onTap: () => _navigateToProfile(reply.username, reply.avatarUrl),
+            onTap: () =>
+                _navigateToProfile(reply.username, reply.avatarUrl),
             child: CircleAvatar(
               radius: 14,
               backgroundImage: NetworkImage(reply.avatarUrl),
@@ -646,7 +608,8 @@ class _CommentsScreenState extends State<CommentsScreen> {
                     children: [
                       WidgetSpan(
                         child: GestureDetector(
-                          onTap: () => _navigateToProfile(reply.username, reply.avatarUrl),
+                          onTap: () => _navigateToProfile(
+                              reply.username, reply.avatarUrl),
                           child: Text(
                             reply.username,
                             style: TextStyle(
@@ -752,12 +715,13 @@ class _CommentsScreenState extends State<CommentsScreen> {
               child: TextField(
                 controller: _commentController,
                 decoration: InputDecoration(
-                  hintText: 'Add a comment...',
+                  hintText: context.tr('add_comment'), // ✅
                   hintStyle: TextStyle(
                     color: Colors.grey[500],
                   ),
                   border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                  contentPadding:
+                  const EdgeInsets.symmetric(vertical: 8),
                 ),
                 style: TextStyle(
                   color: isDark ? Colors.white : Colors.black,
@@ -770,7 +734,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
             GestureDetector(
               onTap: _postComment,
               child: Text(
-                'Post',
+                context.tr('post_comment'), // ✅
                 style: TextStyle(
                   color: _commentController.text.isNotEmpty
                       ? const Color(0xFF0095F6)

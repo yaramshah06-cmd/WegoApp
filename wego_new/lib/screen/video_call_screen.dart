@@ -3,17 +3,20 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:wego_marriage/services/webrtc_service.dart';
-
+import 'app_localizations.dart';
+import 'app_translations.dart';
 class VideoCallScreen extends StatefulWidget {
   final String remoteUserId;
   final String remoteUserName;
   final String remoteUserImage;
+  final String? roomId;
 
   const VideoCallScreen({
     super.key,
     required this.remoteUserId,
     required this.remoteUserName,
     required this.remoteUserImage,
+    this.roomId,
   });
 
   @override
@@ -28,6 +31,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   bool _cameraOn = true;
   bool _isConnecting = true;
   bool _remoteJoined = false;
+  bool _isEndingCall = false; // ✅ Double end call rokne ke liye
   String _roomId = '';
 
   @override
@@ -55,6 +59,9 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   }
 
   String _buildRoomId() {
+    if (widget.roomId != null && widget.roomId!.isNotEmpty) {
+      return widget.roomId!;
+    }
     final ids = [_localUserId, widget.remoteUserId]..sort();
     return '${ids[0]}_${ids[1]}_video';
   }
@@ -62,35 +69,51 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   Future<void> _startCall() async {
     _roomId = _buildRoomId();
 
-    await FirebaseFirestore.instance
+    // Sirf caller naya doc banaye, receiver nahi
+    final doc = await FirebaseFirestore.instance
         .collection('calls')
         .doc(_roomId)
-        .set({
-      'callerId': _localUserId,
-      'receiverId': widget.remoteUserId,
-      'type': 'video',
-      'status': 'ringing',
-      'createdAt': FieldValue.serverTimestamp(),
-    });
+        .get();
+
+    if (!doc.exists) {
+      await FirebaseFirestore.instance
+          .collection('calls')
+          .doc(_roomId)
+          .set({
+        'callerId': _localUserId,
+        'receiverId': widget.remoteUserId,
+        'type': 'video',
+        'status': 'ringing',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    }
 
     await _webrtc.initLocalStream(video: true, audio: true);
-    if (mounted) setState(() {});          // initLocalStream ke BAAD
-    await _webrtc.createOrJoinRoom(_roomId, _localUserId);
+    if (mounted) setState(() {});
+
+    // ✅ callId pass karo — leaveRoom mein delete hoga
+    await _webrtc.createOrJoinRoom(
+      _roomId,
+      _localUserId,
+      callId: _roomId, // ✅ YEH NEW HAI
+    );
   }
 
   Future<void> _endCall() async {
-    await FirebaseFirestore.instance
-        .collection('calls')
-        .doc(_roomId)
-        .update({'status': 'ended'});
+    if (_isEndingCall) return; // ✅ Double call rokna
+    setState(() => _isEndingCall = true);
 
+    // ✅ leaveRoom ke andar call doc delete hoga automatically
     await _webrtc.leaveRoom();
+
     if (mounted) Navigator.pop(context);
   }
 
   @override
   void dispose() {
-    _webrtc.leaveRoom();
+    if (!_isEndingCall) {
+      _webrtc.leaveRoom(); // ✅ Dispose mein bhi cleanup
+    }
     super.dispose();
   }
 
@@ -171,11 +194,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                     const SizedBox(width: 8),
                     Text(
                       widget.remoteUserName,
-                      style: const TextStyle(
-                          color: Colors.white, fontSize: 16),
+                      style:
+                      const TextStyle(color: Colors.white, fontSize: 16),
                     ),
                     const Spacer(),
-                    // ── Remote user joined status ──
                     if (_remoteJoined)
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -186,8 +208,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                         ),
                         child: const Row(
                           children: [
-                            Icon(Icons.circle,
-                                color: Colors.green, size: 8),
+                            Icon(Icons.circle, color: Colors.green, size: 8),
                             SizedBox(width: 4),
                             Text('Connected',
                                 style: TextStyle(
@@ -209,7 +230,6 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                // Mic toggle
                 _CallButton(
                   icon: _micOn ? Icons.mic : Icons.mic_off,
                   color: _micOn ? Colors.white24 : Colors.red,
@@ -218,14 +238,12 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                     setState(() => _micOn = !_micOn);
                   },
                 ),
-                // End call
                 _CallButton(
                   icon: Icons.call_end,
                   color: Colors.red,
                   size: 64,
                   onTap: _endCall,
                 ),
-                // Camera toggle
                 _CallButton(
                   icon: _cameraOn ? Icons.videocam : Icons.videocam_off,
                   color: _cameraOn ? Colors.white24 : Colors.red,

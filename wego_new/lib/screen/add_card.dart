@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'app_localizations.dart';
+import 'app_translations.dart';
 
 // ─────────────────────────────────────────
 //  ADD CARD SCREEN
@@ -48,7 +50,7 @@ class _AddCardScreenState extends State<AddCardScreen> {
                       alignment: Alignment.center,
                       children: [
                         Text(
-                          'Add Card',
+                          context.tr('add_new_card'), // ✅
                           style: TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.w700,
@@ -81,11 +83,11 @@ class _AddCardScreenState extends State<AddCardScreen> {
                     const SizedBox(height: 28),
 
                     // ── Card Holder Name ──────────────
-                    _FieldLabel('Card Holder Name'),
+                    _FieldLabel(context.tr('card_holder_name')), // ✅
                     const SizedBox(height: 8),
                     _InputField(
                       controller: _nameController,
-                      hint: 'John Doe',
+                      hint: context.tr('card_holder_hint'), // ✅
                       keyboardType: TextInputType.name,
                       onChanged: (_) => setState(() {}),
                     ),
@@ -93,7 +95,7 @@ class _AddCardScreenState extends State<AddCardScreen> {
                     const SizedBox(height: 18),
 
                     // ── Card Number ───────────────────
-                    _FieldLabel('Card Number'),
+                    _FieldLabel(context.tr('card_number')), // ✅
                     const SizedBox(height: 8),
                     _InputField(
                       controller: _numberController,
@@ -116,7 +118,7 @@ class _AddCardScreenState extends State<AddCardScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              _FieldLabel('Expiry Date'),
+                              _FieldLabel(context.tr('expiry_date')), // ✅
                               const SizedBox(height: 8),
                               _InputField(
                                 controller: _expiryController,
@@ -139,7 +141,7 @@ class _AddCardScreenState extends State<AddCardScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              _FieldLabel('CVV'),
+                              _FieldLabel(context.tr('cvv')), // ✅
                               const SizedBox(height: 8),
                               _InputField(
                                 controller: _cvvController,
@@ -182,9 +184,9 @@ class _AddCardScreenState extends State<AddCardScreen> {
                       borderRadius: BorderRadius.circular(50),
                     ),
                   ),
-                  child: const Text(
-                    'Save Card',
-                    style: TextStyle(
+                  child: Text(
+                    context.tr('save_card'), // ✅
+                    style: const TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w600,
                     ),
@@ -236,7 +238,6 @@ class _CreditCardWidget extends StatelessWidget {
       ),
       child: Stack(
         children: [
-          // Decorative circles / shine overlays
           Positioned(
             top: -30,
             right: 30,
@@ -267,11 +268,9 @@ class _CreditCardWidget extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Top row: chip placeholder (right)
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    // Magnetic stripe / chip rectangle
                     Container(
                       width: 50,
                       height: 22,
@@ -285,7 +284,6 @@ class _CreditCardWidget extends StatelessWidget {
 
                 const Spacer(),
 
-                // Card Number
                 Text(
                   displayNumber,
                   style: const TextStyle(
@@ -298,16 +296,14 @@ class _CreditCardWidget extends StatelessWidget {
 
                 const SizedBox(height: 14),
 
-                // Card Holder + Expiry + Chip icon
                 Row(
                   children: [
-                    // Card Holder Name
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'Card Holder Name',
-                          style: TextStyle(
+                        Text(
+                          context.tr('card_holder_name'), // ✅
+                          style: const TextStyle(
                             fontSize: 10,
                             color: Colors.white70,
                             fontWeight: FontWeight.w400,
@@ -327,13 +323,12 @@ class _CreditCardWidget extends StatelessWidget {
 
                     const SizedBox(width: 24),
 
-                    // Expiry Date
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'Expiry Date',
-                          style: TextStyle(
+                        Text(
+                          context.tr('expiry_date'), // ✅
+                          style: const TextStyle(
                             fontSize: 10,
                             color: Colors.white70,
                             fontWeight: FontWeight.w400,
@@ -353,7 +348,6 @@ class _CreditCardWidget extends StatelessWidget {
 
                     const Spacer(),
 
-                    // Chip icon (grid of squares)
                     const _ChipIcon(),
                   ],
                 ),
@@ -367,7 +361,7 @@ class _CreditCardWidget extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────
-//  CHIP ICON (grid squares)
+//  CHIP ICON
 // ─────────────────────────────────────────
 class _ChipIcon extends StatelessWidget {
   const _ChipIcon();
@@ -377,32 +371,11 @@ class _ChipIcon extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _chipSquare(),
-            const SizedBox(width: 3),
-            _chipSquare(),
-          ],
-        ),
+        Row(mainAxisSize: MainAxisSize.min, children: [_chipSquare(), const SizedBox(width: 3), _chipSquare()]),
         const SizedBox(height: 3),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _chipSquare(),
-            const SizedBox(width: 3),
-            _chipSquare(),
-          ],
-        ),
+        Row(mainAxisSize: MainAxisSize.min, children: [_chipSquare(), const SizedBox(width: 3), _chipSquare()]),
         const SizedBox(height: 3),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _chipSquare(),
-            const SizedBox(width: 3),
-            _chipSquare(),
-          ],
-        ),
+        Row(mainAxisSize: MainAxisSize.min, children: [_chipSquare(), const SizedBox(width: 3), _chipSquare()]),
       ],
     );
   }
@@ -496,14 +469,12 @@ class _InputField extends StatelessWidget {
 // ─────────────────────────────────────────
 //  TEXT INPUT FORMATTERS
 // ─────────────────────────────────────────
-
-// Card number: 000 000 000 00
 class _CardNumberFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(
-    TextEditingValue oldValue,
-    TextEditingValue newValue,
-  ) {
+      TextEditingValue oldValue,
+      TextEditingValue newValue,
+      ) {
     final digitsOnly = newValue.text.replaceAll(RegExp(r'\D'), '');
     final limited = digitsOnly.length > 11 ? digitsOnly.substring(0, 11) : digitsOnly;
 
@@ -521,13 +492,12 @@ class _CardNumberFormatter extends TextInputFormatter {
   }
 }
 
-// Expiry: MM/YY
 class _ExpiryDateFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(
-    TextEditingValue oldValue,
-    TextEditingValue newValue,
-  ) {
+      TextEditingValue oldValue,
+      TextEditingValue newValue,
+      ) {
     final digitsOnly = newValue.text.replaceAll(RegExp(r'\D'), '');
     final limited = digitsOnly.length > 4 ? digitsOnly.substring(0, 4) : digitsOnly;
 

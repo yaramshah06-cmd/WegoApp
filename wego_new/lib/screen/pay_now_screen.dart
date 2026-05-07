@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'app_translations.dart';
 
 // ─────────────────────────────────────────
 //  PAYMENT SCREEN
@@ -12,13 +13,14 @@ class PaymentScreen extends StatelessWidget {
     final textColor = isDarkMode ? Colors.white : Colors.black87;
     final subTextColor = isDarkMode ? Colors.white70 : Colors.black54;
     final dividerColor = isDarkMode ? Colors.white24 : const Color(0xFFE0E4F0);
+    final lang = Localizations.localeOf(context).languageCode;
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Column(
         children: [
           // ── Blue Header ───────────────────────
-          _BlueHeader(),
+          _BlueHeader(lang: lang),
 
           // ── Scrollable Body ───────────────────
           Expanded(
@@ -31,84 +33,76 @@ class PaymentScreen extends StatelessWidget {
                     const SizedBox(height: 20),
 
                     // ── Doctor Card ───────────────
-                    _DoctorCard(isDarkMode: isDarkMode, textColor: textColor, subTextColor: subTextColor),
+                    _DoctorCard(
+                      isDarkMode: isDarkMode,
+                      textColor: textColor,
+                      subTextColor: subTextColor,
+                    ),
 
                     const SizedBox(height: 20),
 
-                    // Divider
                     Divider(color: dividerColor, thickness: 1),
 
                     const SizedBox(height: 14),
 
                     // ── Appointment Info ──────────
                     _InfoRow(
-                      label: 'Date / Hour',
+                      label: AppTranslations.translate('date_hour', lang),
                       value: 'Month 24, Year / 10:00 AM',
-                      valueStyle: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: textColor,
-                      ),
+                      valueStyle: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: textColor),
                     ),
                     const SizedBox(height: 10),
-                    _InfoRow(label: 'Duration', value: '30 Minutes', valueStyle: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: textColor,
-                    ),),
+                    _InfoRow(
+                      label: AppTranslations.translate('duration', lang),
+                      value: '30 Minutes',
+                      valueStyle: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: textColor),
+                    ),
                     const SizedBox(height: 10),
-                    _InfoRow(label: 'Booking for', value: 'Another Person', valueStyle: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: textColor,
-                    ),),
+                    _InfoRow(
+                      label: AppTranslations.translate('booking_for', lang),
+                      value: AppTranslations.translate('another_person', lang),
+                      valueStyle: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: textColor),
+                    ),
 
                     const SizedBox(height: 14),
 
-                    // Divider
                     Divider(color: dividerColor, thickness: 1),
 
                     const SizedBox(height: 14),
 
                     // ── Billing Info ──────────────
-                    _InfoRow(label: 'Amount', value: '\$100.00', valueStyle: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: textColor,
-                    ),),
+                    _InfoRow(
+                      label: AppTranslations.translate('amount', lang),
+                      value: '\$100.00',
+                      valueStyle: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: textColor),
+                    ),
                     const SizedBox(height: 10),
-                    _InfoRow(label: 'Duration', value: '30 Minutes', valueStyle: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: textColor,
-                    ),),
+                    _InfoRow(
+                      label: AppTranslations.translate('duration', lang),
+                      value: '30 Minutes',
+                      valueStyle: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: textColor),
+                    ),
 
                     const SizedBox(height: 14),
 
-                    // Divider
                     Divider(color: dividerColor, thickness: 1),
 
                     const SizedBox(height: 14),
 
                     // ── Total ─────────────────────
                     _InfoRow(
-                      label: 'Total',
+                      label: AppTranslations.translate('total', lang),
                       value: '\$100',
                       labelStyle: const TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
                         color: Color(0xFF3A5DE0),
                       ),
-                      valueStyle: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: textColor,
-                      ),
+                      valueStyle: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: textColor),
                     ),
 
                     const SizedBox(height: 14),
 
-                    // Divider
                     Divider(color: dividerColor, thickness: 1),
 
                     const SizedBox(height: 14),
@@ -117,9 +111,9 @@ class PaymentScreen extends StatelessWidget {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text(
-                          'Payment Method',
-                          style: TextStyle(
+                        Text(
+                          AppTranslations.translate('payment_method', lang),
+                          style: const TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w500,
                             color: Color(0xFF3A5DE0),
@@ -128,7 +122,7 @@ class PaymentScreen extends StatelessWidget {
                         Row(
                           children: [
                             Text(
-                              'Card',
+                              AppTranslations.translate('card', lang),
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w600,
@@ -138,9 +132,9 @@ class PaymentScreen extends StatelessWidget {
                             const SizedBox(width: 8),
                             GestureDetector(
                               onTap: () {},
-                              child: const Text(
-                                'Change',
-                                style: TextStyle(
+                              child: Text(
+                                AppTranslations.translate('change', lang),
+                                style: const TextStyle(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w600,
                                   color: Color(0xFF3A5DE0),
@@ -177,9 +171,9 @@ class PaymentScreen extends StatelessWidget {
                     borderRadius: BorderRadius.circular(50),
                   ),
                 ),
-                child: const Text(
-                  'Pay Now',
-                  style: TextStyle(
+                child: Text(
+                  AppTranslations.translate('pay_now', lang),
+                  style: const TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w700,
                   ),
@@ -197,6 +191,9 @@ class PaymentScreen extends StatelessWidget {
 //  BLUE HEADER
 // ─────────────────────────────────────────
 class _BlueHeader extends StatelessWidget {
+  final String lang;
+  const _BlueHeader({required this.lang});
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -208,13 +205,12 @@ class _BlueHeader extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 36),
           child: Column(
             children: [
-              // Top bar row
               Stack(
                 alignment: Alignment.center,
                 children: [
-                  const Text(
-                    'Payment',
-                    style: TextStyle(
+                  Text(
+                    AppTranslations.translate('payment', lang),
+                    style: const TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.w700,
                       color: Colors.white,
@@ -236,7 +232,7 @@ class _BlueHeader extends StatelessWidget {
 
               const SizedBox(height: 28),
 
-              // Amount
+              // Amount (dynamic — no key)
               const Text(
                 '\$ 100.00',
                 style: TextStyle(
@@ -264,7 +260,11 @@ class _DoctorCard extends StatelessWidget {
   final Color textColor;
   final Color subTextColor;
 
-  const _DoctorCard({required this.isDarkMode, required this.textColor, required this.subTextColor});
+  const _DoctorCard({
+    required this.isDarkMode,
+    required this.textColor,
+    required this.subTextColor,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -292,12 +292,10 @@ class _DoctorCard extends StatelessWidget {
 
         const SizedBox(width: 14),
 
-        // Info
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Name + badge
               Row(
                 children: [
                   const Expanded(
@@ -328,7 +326,6 @@ class _DoctorCard extends StatelessWidget {
 
               const SizedBox(height: 3),
 
-              // Specialty
               Text(
                 'Dermato-Endocrinology',
                 style: TextStyle(
@@ -340,7 +337,6 @@ class _DoctorCard extends StatelessWidget {
 
               const SizedBox(height: 8),
 
-              // Stats row
               Row(
                 children: [
                   _StatChip(

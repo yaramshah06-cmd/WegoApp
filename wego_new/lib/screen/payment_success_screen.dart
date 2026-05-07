@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'app_translations.dart';
 
 // ─────────────────────────────────────────
 //  PAYMENT SUCCESS SCREEN
@@ -11,6 +12,7 @@ class PaymentSuccessScreen extends StatelessWidget {
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
     final textColor = isDarkMode ? Colors.white : Colors.black87;
     final primaryColor = const Color(0xFF3A5DE0);
+    final lang = Localizations.localeOf(context).languageCode;
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
@@ -65,7 +67,7 @@ class PaymentSuccessScreen extends StatelessWidget {
 
                       // ── Congratulation ────────────
                       Text(
-                        'Congratulation',
+                        AppTranslations.translate('congratulation', lang),
                         style: TextStyle(
                           fontSize: 28,
                           fontWeight: FontWeight.w800,
@@ -78,7 +80,7 @@ class PaymentSuccessScreen extends StatelessWidget {
 
                       // ── Subtitle ──────────────────
                       Text(
-                        'Payment is Successfully',
+                        AppTranslations.translate('payment_success', lang),
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w400,
@@ -89,7 +91,12 @@ class PaymentSuccessScreen extends StatelessWidget {
                       const SizedBox(height: 50),
 
                       // ── Booking Info Card ─────────
-                      _BookingInfoCard(isDarkMode: isDarkMode, primaryColor: primaryColor, textColor: textColor),
+                      _BookingInfoCard(
+                        isDarkMode: isDarkMode,
+                        primaryColor: primaryColor,
+                        textColor: textColor,
+                        lang: lang,
+                      ),
 
                       const SizedBox(height: 40),
                     ],
@@ -111,8 +118,14 @@ class _BookingInfoCard extends StatelessWidget {
   final bool isDarkMode;
   final Color primaryColor;
   final Color textColor;
+  final String lang;
 
-  const _BookingInfoCard({required this.isDarkMode, required this.primaryColor, required this.textColor});
+  const _BookingInfoCard({
+    required this.isDarkMode,
+    required this.primaryColor,
+    required this.textColor,
+    required this.lang,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -133,7 +146,7 @@ class _BookingInfoCard extends StatelessWidget {
           // Description text
           Center(
             child: Text(
-              'You have successfully booked an\nappointment with',
+              AppTranslations.translate('booking_success_msg', lang),
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 13,
@@ -146,7 +159,7 @@ class _BookingInfoCard extends StatelessWidget {
 
           const SizedBox(height: 12),
 
-          // Doctor Name
+          // Doctor Name (dynamic)
           Text(
             'Dr. Olivia Turner, M.D.',
             style: TextStyle(
@@ -158,7 +171,7 @@ class _BookingInfoCard extends StatelessWidget {
 
           const SizedBox(height: 12),
 
-          // Date + Time row
+          // Date + Time row (dynamic)
           Row(
             children: [
               // Date

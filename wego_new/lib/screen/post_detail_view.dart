@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:wego_marriage/screen/chat_screen.dart';
+import 'app_localizations.dart';
+import 'app_translations.dart';
 
 class PostDetailView extends StatefulWidget {
   final List<String> imageUrls;
@@ -57,7 +59,10 @@ class _PostDetailViewState extends State<PostDetailView> {
         backgroundColor: isDark ? Colors.black : Colors.white,
         elevation: 0,
         leading: IconButton(
-          icon: Icon(Icons.arrow_back, color: isDark ? Colors.white : Colors.black),
+          icon: Icon(
+            Icons.arrow_back,
+            color: isDark ? Colors.white : Colors.black,
+          ),
           onPressed: () => Navigator.pop(context),
         ),
         title: Column(
@@ -71,7 +76,7 @@ class _PostDetailViewState extends State<PostDetailView> {
               ),
             ),
             Text(
-              'Posts',
+              context.tr('posts'), // ✅
               style: TextStyle(
                 color: isDark ? Colors.white : Colors.black,
                 fontSize: 16,
@@ -87,7 +92,8 @@ class _PostDetailViewState extends State<PostDetailView> {
         scrollDirection: Axis.vertical,
         itemCount: widget.imageUrls.length,
         itemBuilder: (context, index) {
-          return _buildPostItem(widget.imageUrls[index], isDark, primaryColor);
+          return _buildPostItem(
+              widget.imageUrls[index], isDark, primaryColor);
         },
       ),
     );
@@ -118,7 +124,7 @@ class _PostDetailViewState extends State<PostDetailView> {
               const SizedBox(width: 12),
               // Message button
               GestureDetector(
-                onTap: () => _navigateToChat(),
+                onTap: _navigateToChat,
                 child: Icon(
                   Icons.message_outlined,
                   color: primaryColor,
@@ -126,11 +132,14 @@ class _PostDetailViewState extends State<PostDetailView> {
                 ),
               ),
               const Spacer(),
-              Icon(Icons.more_vert, color: isDark ? Colors.white : Colors.black),
+              Icon(
+                Icons.more_vert,
+                color: isDark ? Colors.white : Colors.black,
+              ),
             ],
           ),
         ),
-        
+
         // Post Image
         AspectRatio(
           aspectRatio: 1,
@@ -141,36 +150,42 @@ class _PostDetailViewState extends State<PostDetailView> {
               if (progress == null) return child;
               return Container(
                 color: isDark ? Colors.grey[900] : Colors.grey[200],
-                child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                child: const Center(
+                    child: CircularProgressIndicator(strokeWidth: 2)),
               );
             },
           ),
         ),
-        
+
         // Post Actions
         Padding(
           padding: const EdgeInsets.all(12.0),
           child: Row(
             children: [
-              Icon(Icons.favorite_border, color: isDark ? Colors.white : Colors.black, size: 28),
+              Icon(Icons.favorite_border,
+                  color: isDark ? Colors.white : Colors.black, size: 28),
               const SizedBox(width: 16),
-              Icon(Icons.chat_bubble_outline, color: isDark ? Colors.white : Colors.black, size: 26),
+              Icon(Icons.chat_bubble_outline,
+                  color: isDark ? Colors.white : Colors.black, size: 26),
               const SizedBox(width: 16),
-              Icon(Icons.send_outlined, color: isDark ? Colors.white : Colors.black, size: 26),
+              Icon(Icons.send_outlined,
+                  color: isDark ? Colors.white : Colors.black, size: 26),
               const Spacer(),
-              Icon(Icons.bookmark_border, color: isDark ? Colors.white : Colors.black, size: 28),
+              Icon(Icons.bookmark_border,
+                  color: isDark ? Colors.white : Colors.black, size: 28),
             ],
           ),
         ),
-        
+
         // Likes & Caption
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // ✅ Likes
               Text(
-                '1,234 likes',
+                '1,234 ${context.tr('likes')}',
                 style: TextStyle(
                   color: isDark ? Colors.white : Colors.black,
                   fontWeight: FontWeight.bold,
@@ -197,14 +212,17 @@ class _PostDetailViewState extends State<PostDetailView> {
                 ),
               ),
               const SizedBox(height: 6),
+              // ✅ View all comments
               Text(
-                'View all 12 comments',
-                style: TextStyle(color: Colors.grey, fontSize: 14),
+                context.tr('view_all_comments'),
+                style: const TextStyle(color: Colors.grey, fontSize: 14),
               ),
               const SizedBox(height: 4),
+              // ✅ Hours ago
               Text(
-                '2 HOURS AGO',
-                style: TextStyle(color: Colors.grey, fontSize: 10),
+                '2 ${context.tr('hours_ago')}',
+                style:
+                const TextStyle(color: Colors.grey, fontSize: 10),
               ),
             ],
           ),

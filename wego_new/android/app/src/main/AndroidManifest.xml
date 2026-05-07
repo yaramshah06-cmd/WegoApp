@@ -5,9 +5,20 @@
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <!-- Biometric — USE_FINGERPRINT deprecated hai, sirf USE_BIOMETRIC kaafi hai -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
+    <!-- Gallery / Media access (Android 13+) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    <!-- Older Android fallback -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32"/>
 
-    <!-- Camera feature tag (warning fix) -->
+    <!-- Camera feature tag -->
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
+    <!-- Biometric feature tag -->
+    <uses-feature android:name="android.hardware.fingerprint" android:required="false"/>
 
     <application
         android:label="wego_new"
@@ -34,10 +45,29 @@
 
         </activity>
 
+        <!-- Facebook Login Activity -->
+        <activity
+            android:name="com.facebook.FacebookActivity"
+            android:configChanges="keyboard|keyboardHidden|screenLayout|screenSize|orientation"
+            android:label="@string/app_name"/>
+
+        <!-- Facebook Custom Tab Activity -->
+        <activity
+            android:name="com.facebook.CustomTabActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="fb1694573471717063"/>
+            </intent-filter>
+        </activity>
+
         <meta-data
             android:name="flutterEmbedding"
             android:value="2"/>
 
+        <!-- Facebook SDK -->
         <meta-data
             android:name="com.facebook.sdk.ApplicationId"
             android:value="@string/facebook_app_id"/>
@@ -53,6 +83,10 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- Google Sign-In (Android 11+) -->
+        <package android:name="com.google.android.gms"/>
+        <!-- Google Chrome Custom Tabs -->
+        <package android:name="com.android.chrome"/>
     </queries>
 
 </manifest>

@@ -1,12 +1,25 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'dart:math' as math;
+import 'app_translations.dart';
 
-// ── Colors ────────────────────────────────────────────────────
 const Color kPrimaryBlue = Color(0xFF4A6CF7);
 
-// ── Match Screen ──────────────────────────────────────────────
 class MatchPopupScreen extends StatefulWidget {
-  const MatchPopupScreen({super.key});
+  final String matchedUserName;
+  final String matchedUserImage;
+  final String matchedUserUid;
+  final VoidCallback? onSayHello;
+  final VoidCallback? onCancel;
+
+  const MatchPopupScreen({
+    super.key,
+    required this.matchedUserName,
+    required this.matchedUserImage,
+    required this.matchedUserUid,
+    this.onSayHello,
+    this.onCancel,
+  });
 
   @override
   State<MatchPopupScreen> createState() => _MatchPopupScreenState();
@@ -18,6 +31,9 @@ class _MatchPopupScreenState extends State<MatchPopupScreen>
   late Animation<double> _fadeAnim;
   late Animation<double> _scaleAnim;
   late Animation<double> _slideAnim;
+
+  int _countdown = 3;
+  Timer? _countdownTimer;
 
   @override
   void initState() {
@@ -37,31 +53,46 @@ class _MatchPopupScreenState extends State<MatchPopupScreen>
     );
 
     _animCtrl.forward();
+    _startCountdown();
   }
 
   @override
   void dispose() {
+    _countdownTimer?.cancel();
     _animCtrl.dispose();
     super.dispose();
+  }
+
+  void _startCountdown() {
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) return;
+      setState(() => _countdown--);
+      if (_countdown <= 0) {
+        t.cancel();
+        if (widget.onSayHello != null) {
+          widget.onSayHello!();
+        } else {
+          Navigator.pop(context);
+        }
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
-    final Color textColor = isDark ? Colors.white : Colors.black87;
     final Color secondaryTextColor = isDark ? Colors.white70 : Colors.black45;
+    final lang = Localizations.localeOf(context).languageCode;
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Column(
         children: [
-          // Status bar
           Container(
             color: kPrimaryBlue,
             height: MediaQuery.of(context).padding.top,
           ),
-
           Expanded(
             child: FadeTransition(
               opacity: _fadeAnim,
@@ -69,16 +100,13 @@ class _MatchPopupScreenState extends State<MatchPopupScreen>
                 scale: _scaleAnim,
                 child: Column(
                   children: [
-                    // ── Photo Cards section ──
                     Expanded(
                       flex: 6,
                       child: _buildPhotoCards(size),
                     ),
-
-                    // ── Text section ──
                     Expanded(
                       flex: 4,
-                      child: _buildBottomSection(textColor, secondaryTextColor),
+                      child: _buildBottomSection(secondaryTextColor, isDark, lang),
                     ),
                   ],
                 ),
@@ -90,49 +118,39 @@ class _MatchPopupScreenState extends State<MatchPopupScreen>
     );
   }
 
-  // ── Photo Cards ───────────────────────────────────────────────
   Widget _buildPhotoCards(Size size) {
     return Stack(
       clipBehavior: Clip.none,
       alignment: Alignment.center,
       children: [
-        // ── Right card (Jake - man) — tilted right, behind ──
         Positioned(
           top: 30,
           right: size.width * 0.04,
           child: Transform.rotate(
             angle: 8 * math.pi / 180,
             child: _PhotoCard(
-              imageUrl:
-              'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=400',
+              imageUrl: widget.matchedUserImage,
               width: size.width * 0.52,
               height: size.height * 0.42,
             ),
           ),
         ),
-
-        // ── Left card (Girl) — tilted left, in front ──
         Positioned(
           top: 55,
           left: size.width * 0.04,
           child: Transform.rotate(
             angle: -6 * math.pi / 180,
             child: _PhotoCard(
-              imageUrl:
-              'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=400',
+              imageUrl: 'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=400',
               width: size.width * 0.50,
               height: size.height * 0.40,
             ),
           ),
         ),
-
-        // ── Top center heart badge ──
-        Positioned(
+        const Positioned(
           top: 10,
-          child: const _HeartBadge(size: 52),
+          child: _HeartBadge(size: 52),
         ),
-
-        // ── Bottom left heart badge ──
         Positioned(
           bottom: 10,
           left: size.width * 0.06,
@@ -142,9 +160,7 @@ class _MatchPopupScreenState extends State<MatchPopupScreen>
     );
   }
 
-  // ── Bottom Section ────────────────────────────────────────────
-  Widget _buildBottomSection(Color textColor, Color secondaryTextColor) {
-    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+  Widget _buildBottomSection(Color secondaryTextColor, bool isDark, String lang) {
     return AnimatedBuilder(
       animation: _slideAnim,
       builder: (context, child) {
@@ -158,70 +174,101 @@ class _MatchPopupScreenState extends State<MatchPopupScreen>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Match text
-            const Text(
-              "It's a match, Jake!",
-              style: TextStyle(
+            // ── Match Title ──
+            Text(
+              "${AppTranslations.translate('its_a_match', lang)}, ${widget.matchedUserName}!",
+              style: const TextStyle(
                 fontSize: 26,
                 fontWeight: FontWeight.bold,
                 color: kPrimaryBlue,
               ),
             ),
             const SizedBox(height: 10),
+
+            // ── Subtitle ──
             Text(
-              'Start a conversation now with each other',
+              AppTranslations.translate('start_conversation', lang),
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 14,
-                color: secondaryTextColor,
-              ),
+              style: TextStyle(fontSize: 14, color: secondaryTextColor),
             ),
 
             const SizedBox(height: 32),
 
-            // ── Say Hello button ──
+            // ── Timer Button ──
             SizedBox(
               width: double.infinity,
               height: 56,
-              child: ElevatedButton(
-                onPressed: () {},
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: kPrimaryBlue,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: kPrimaryBlue,
+                  borderRadius: BorderRadius.circular(16),
                 ),
-                child: const Text(
-                  'Say hello',
-                  style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w600,
-                  ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: 28,
+                      height: 28,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          CircularProgressIndicator(
+                            value: _countdown / 3,
+                            color: Colors.white,
+                            backgroundColor: Colors.white30,
+                            strokeWidth: 3,
+                          ),
+                          Text(
+                            '$_countdown',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      AppTranslations.translate('connecting', lang),
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
 
             const SizedBox(height: 14),
 
-            // ── Keep Swiping button ──
+            // ── Cancel Button ──
             SizedBox(
               width: double.infinity,
               height: 56,
               child: ElevatedButton(
-                onPressed: () {},
+                onPressed: () {
+                  _countdownTimer?.cancel();
+                  if (widget.onCancel != null) {
+                    widget.onCancel!();
+                  } else {
+                    Navigator.pop(context);
+                  }
+                },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: isDark ? Colors.white10 : kPrimaryBlue.withValues(alpha: 0.1),
-                  foregroundColor: kPrimaryBlue,
+                  backgroundColor: isDark ? Colors.white10 : Colors.red.withOpacity(0.08),
+                  foregroundColor: Colors.red,
                   elevation: 0,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
                   ),
                 ),
-                child: const Text(
-                  'Keep swiping',
-                  style: TextStyle(
+                child: Text(
+                  AppTranslations.translate('cancel', lang),
+                  style: const TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w600,
                   ),
@@ -235,7 +282,9 @@ class _MatchPopupScreenState extends State<MatchPopupScreen>
   }
 }
 
-// ── Photo Card Widget ─────────────────────────────────────────
+// ─────────────────────────────────────────
+//  PHOTO CARD
+// ─────────────────────────────────────────
 class _PhotoCard extends StatelessWidget {
   final String imageUrl;
   final double width;
@@ -257,7 +306,7 @@ class _PhotoCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.18),
+            color: Colors.black.withOpacity(0.18),
             blurRadius: 16,
             offset: const Offset(0, 8),
           ),
@@ -277,7 +326,8 @@ class _PhotoCard extends StatelessWidget {
           },
           errorBuilder: (context, error, stackTrace) => Container(
             color: isDark ? Colors.white10 : Colors.grey[300],
-            child: Icon(Icons.person, size: 60, color: isDark ? Colors.white38 : Colors.grey),
+            child: Icon(Icons.person,
+                size: 60, color: isDark ? Colors.white38 : Colors.grey),
           ),
         ),
       ),
@@ -285,7 +335,9 @@ class _PhotoCard extends StatelessWidget {
   }
 }
 
-// ── Heart Badge Widget ────────────────────────────────────────
+// ─────────────────────────────────────────
+//  HEART BADGE
+// ─────────────────────────────────────────
 class _HeartBadge extends StatelessWidget {
   final double size;
   const _HeartBadge({required this.size});
@@ -301,7 +353,7 @@ class _HeartBadge extends StatelessWidget {
         shape: BoxShape.circle,
         boxShadow: [
           BoxShadow(
-            color: kPrimaryBlue.withValues(alpha: 0.25),
+            color: kPrimaryBlue.withOpacity(0.25),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),

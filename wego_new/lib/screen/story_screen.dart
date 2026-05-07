@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:wego_marriage/providers/story_provider.dart';
 import 'package:wego_marriage/screen/user_profile_screen.dart';
+import 'app_localizations.dart';
+import 'app_translations.dart';
 
 class StoryScreen extends StatefulWidget {
   final int initialUserIndex;
@@ -12,7 +14,8 @@ class StoryScreen extends StatefulWidget {
   State<StoryScreen> createState() => _StoryScreenState();
 }
 
-class _StoryScreenState extends State<StoryScreen> with SingleTickerProviderStateMixin {
+class _StoryScreenState extends State<StoryScreen>
+    with SingleTickerProviderStateMixin {
   late PageController _pageController;
   late AnimationController _animationController;
   int _currentUserIndex = 0;
@@ -24,7 +27,7 @@ class _StoryScreenState extends State<StoryScreen> with SingleTickerProviderStat
     super.initState();
     _currentUserIndex = widget.initialUserIndex;
     _pageController = PageController(initialPage: 0);
-    
+
     _animationController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 5),
@@ -49,21 +52,21 @@ class _StoryScreenState extends State<StoryScreen> with SingleTickerProviderStat
   void _goToNextStory() {
     final storyProvider = context.read<StoryProvider>();
     final allUserStories = storyProvider.userStories;
+    if (allUserStories.isEmpty) {
+      Navigator.of(context).pop();
+      return;
+    }
+
     final currentUserStories = allUserStories[_currentUserIndex].stories;
-    
+
     if (_currentStoryIndex < currentUserStories.length - 1) {
-      // Next story of same user
-      setState(() {
-        _currentStoryIndex++;
-      });
+      setState(() => _currentStoryIndex++);
       _animationController.reset();
       _animationController.forward();
     } else {
-      // Current user's stories finished, mark as watched
       storyProvider.markAsWatched(allUserStories[_currentUserIndex].userId);
 
       if (_currentUserIndex < allUserStories.length - 1) {
-        // Move to next user
         setState(() {
           _currentUserIndex++;
           _currentStoryIndex = 0;
@@ -71,7 +74,6 @@ class _StoryScreenState extends State<StoryScreen> with SingleTickerProviderStat
         _animationController.reset();
         _animationController.forward();
       } else {
-        // No more stories
         Navigator.of(context).pop();
       }
     }
@@ -79,54 +81,93 @@ class _StoryScreenState extends State<StoryScreen> with SingleTickerProviderStat
 
   void _goToPreviousStory() {
     final allUserStories = context.read<StoryProvider>().userStories;
-    
+    if (allUserStories.isEmpty) return;
+
     if (_currentStoryIndex > 0) {
-      setState(() {
-        _currentStoryIndex--;
-      });
+      setState(() => _currentStoryIndex--);
       _animationController.reset();
       _animationController.forward();
     } else if (_currentUserIndex > 0) {
       setState(() {
         _currentUserIndex--;
-        _currentStoryIndex = allUserStories[_currentUserIndex].stories.length - 1;
+        _currentStoryIndex =
+            allUserStories[_currentUserIndex].stories.length - 1;
       });
       _animationController.reset();
       _animationController.forward();
     } else {
-      // At the very beginning, just restart current story
       _animationController.reset();
       _animationController.forward();
     }
   }
 
-  void _navigateToProfile(String username, String avatarUrl) {
+  void _navigateToProfile(String userId, String username, String avatarUrl) {
     _animationController.stop();
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => UserProfileScreen(
+          userId: userId,
           username: username,
           avatarUrl: avatarUrl,
         ),
       ),
     ).then((_) {
-      if (mounted) {
-        _animationController.forward();
-      }
+      if (mounted) _animationController.forward();
     });
   }
 
   @override
   Widget build(BuildContext context) {
     final storyProvider = context.watch<StoryProvider>();
-    final allUserStories = storyProvider.userStories;
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final Color textColor = isDark ? Colors.white : Colors.black87;
-    
-    // Safety check if index out of bounds due to reordering
+
+    if (storyProvider.isLoading) {
+      return Scaffold(
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        body: Center(child: CircularProgressIndicator(color: textColor)),
+      );
+    }
+
+    final allUserStories = storyProvider.userStories;
+
+    // ✅ Translated — pehle 'Koi story nahi' / 'Wapas jao' tha
+    if (allUserStories.isEmpty) {
+      return Scaffold(
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.photo_library_outlined, color: textColor, size: 64),
+              const SizedBox(height: 16),
+              Text(
+                context.tr('no_stories'), // ✅
+                style: TextStyle(color: textColor, fontSize: 18),
+              ),
+              const SizedBox(height: 16),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(
+                  context.tr('go_back'), // ✅
+                  style: TextStyle(color: textColor),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Index safety check
     if (_currentUserIndex >= allUserStories.length) {
-       _currentUserIndex = allUserStories.length - 1;
+      _currentUserIndex = allUserStories.length - 1;
+    }
+    if (_currentStoryIndex >=
+        allUserStories[_currentUserIndex].stories.length) {
+      _currentStoryIndex =
+          allUserStories[_currentUserIndex].stories.length - 1;
     }
 
     final userStory = allUserStories[_currentUserIndex];
@@ -136,19 +177,15 @@ class _StoryScreenState extends State<StoryScreen> with SingleTickerProviderStat
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Stack(
         children: [
-          // Current story image
+          // Story image
           Center(
             child: GestureDetector(
               onLongPress: () {
-                setState(() {
-                  _isPaused = true;
-                });
+                setState(() => _isPaused = true);
                 _animationController.stop();
               },
               onLongPressUp: () {
-                setState(() {
-                  _isPaused = false;
-                });
+                setState(() => _isPaused = false);
                 _animationController.forward();
               },
               child: Image.network(
@@ -159,14 +196,13 @@ class _StoryScreenState extends State<StoryScreen> with SingleTickerProviderStat
                 loadingBuilder: (context, child, progress) {
                   if (progress == null) {
                     if (!_isPaused && !_animationController.isAnimating) {
-                       _animationController.forward();
+                      _animationController.forward();
                     }
                     return child;
                   }
                   _animationController.stop();
                   return Center(
-                    child: CircularProgressIndicator(color: isDark ? Colors.white : Colors.black87),
-                  );
+                      child: CircularProgressIndicator(color: textColor));
                 },
                 errorBuilder: (context, error, stackTrace) => Center(
                   child: Icon(Icons.broken_image, color: textColor, size: 64),
@@ -175,7 +211,7 @@ class _StoryScreenState extends State<StoryScreen> with SingleTickerProviderStat
             ),
           ),
 
-          // Tap areas for navigation
+          // Tap areas
           Positioned.fill(
             child: Row(
               children: [
@@ -199,43 +235,59 @@ class _StoryScreenState extends State<StoryScreen> with SingleTickerProviderStat
           SafeArea(
             child: Column(
               children: [
-                // Progress indicators (Segments)
+                // Progress bars
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 8),
                   child: AnimatedBuilder(
                     animation: _animationController,
                     builder: (context, child) {
                       return Row(
                         children: List.generate(
                           userStory.stories.length,
-                          (index) => _buildProgressBar(index, isDark),
+                              (index) => _buildProgressBar(index, isDark),
                         ),
                       );
                     },
                   ),
                 ),
+
                 // User info bar
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   child: Row(
                     children: [
                       GestureDetector(
-                        onTap: () => _navigateToProfile(userStory.username, userStory.avatarUrl),
+                        onTap: () => _navigateToProfile(
+                          userStory.userId,
+                          userStory.username,
+                          userStory.avatarUrl,
+                        ),
                         child: CircleAvatar(
                           radius: 20,
                           backgroundImage: NetworkImage(userStory.avatarUrl),
+                          backgroundColor: Colors.grey,
                         ),
                       ),
                       const SizedBox(width: 10),
                       GestureDetector(
-                        onTap: () => _navigateToProfile(userStory.username, userStory.avatarUrl),
+                        onTap: () => _navigateToProfile(
+                          userStory.userId,
+                          userStory.username,
+                          userStory.avatarUrl,
+                        ),
                         child: Text(
                           userStory.username,
                           style: TextStyle(
                             color: textColor,
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
-                            shadows: isDark ? [const Shadow(color: Colors.black54, blurRadius: 4)] : null,
+                            shadows: isDark
+                                ? [
+                              const Shadow(
+                                  color: Colors.black54, blurRadius: 4)
+                            ]
+                                : null,
                           ),
                         ),
                       ),
@@ -276,7 +328,7 @@ class _StoryScreenState extends State<StoryScreen> with SingleTickerProviderStat
           widthFactor: progress,
           child: Container(
             decoration: BoxDecoration(
-              color: isDark ? Colors.white : Colors.black87, // Active story color
+              color: isDark ? Colors.white : Colors.black87,
               borderRadius: BorderRadius.circular(2),
             ),
           ),

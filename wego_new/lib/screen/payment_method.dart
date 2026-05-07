@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'app_translations.dart';
 
 // ─────────────────────────────────────────
 //  PAYMENT METHOD SCREEN
@@ -18,6 +19,7 @@ class _PaymentMethodScreenState extends State<PaymentMethodScreen> {
   Widget build(BuildContext context) {
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
     final textColor = isDarkMode ? Colors.white : Colors.black87;
+    final lang = Localizations.localeOf(context).languageCode;
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
@@ -33,9 +35,9 @@ class _PaymentMethodScreenState extends State<PaymentMethodScreen> {
               Stack(
                 alignment: Alignment.center,
                 children: [
-                  const Text(
-                    'Payment Method',
-                    style: TextStyle(
+                  Text(
+                    AppTranslations.translate('payment_method', lang),
+                    style: const TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.w700,
                       color: Color(0xFF2B4DE0),
@@ -59,7 +61,7 @@ class _PaymentMethodScreenState extends State<PaymentMethodScreen> {
 
               // ── Section 1: Credit & Debit Card ───
               Text(
-                'Credit & Debit Card',
+                AppTranslations.translate('credit_debit_card', lang),
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
@@ -90,9 +92,9 @@ class _PaymentMethodScreenState extends State<PaymentMethodScreen> {
                       ),
                     ),
                     const SizedBox(width: 14),
-                    const Text(
-                      'Add New Card',
-                      style: TextStyle(
+                    Text(
+                      AppTranslations.translate('add_new_card', lang),
+                      style: const TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w500,
                         color: Color(0xFF3A5DE0),
@@ -106,7 +108,7 @@ class _PaymentMethodScreenState extends State<PaymentMethodScreen> {
 
               // ── Section 2: More Payment Option ───
               Text(
-                'More Payment Option',
+                AppTranslations.translate('more_payment_option', lang),
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
@@ -125,9 +127,9 @@ class _PaymentMethodScreenState extends State<PaymentMethodScreen> {
                   children: [
                     _ApplePayIcon(isDarkMode: isDarkMode),
                     const SizedBox(width: 14),
-                    const Text(
-                      'Apple Pay',
-                      style: TextStyle(
+                    Text(
+                      AppTranslations.translate('apple_pay', lang),
+                      style: const TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w500,
                         color: Color(0xFF3A5DE0),
@@ -148,9 +150,9 @@ class _PaymentMethodScreenState extends State<PaymentMethodScreen> {
                   children: [
                     _PaypalIcon(isDarkMode: isDarkMode),
                     const SizedBox(width: 14),
-                    const Text(
-                      'Paypal',
-                      style: TextStyle(
+                    Text(
+                      AppTranslations.translate('paypal', lang),
+                      style: const TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w500,
                         color: Color(0xFF3A5DE0),
@@ -171,9 +173,9 @@ class _PaymentMethodScreenState extends State<PaymentMethodScreen> {
                   children: [
                     _GooglePayIcon(isDarkMode: isDarkMode),
                     const SizedBox(width: 14),
-                    const Text(
-                      'Google Pay',
-                      style: TextStyle(
+                    Text(
+                      AppTranslations.translate('google_pay', lang),
+                      style: const TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w500,
                         color: Color(0xFF3A5DE0),
@@ -255,7 +257,6 @@ class _PaymentTile extends StatelessWidget {
 //  CUSTOM ICONS
 // ─────────────────────────────────────────
 
-// Apple Pay Icon (Apple logo)
 class _ApplePayIcon extends StatelessWidget {
   final bool isDarkMode;
   const _ApplePayIcon({required this.isDarkMode});
@@ -280,7 +281,6 @@ class _ApplePayIcon extends StatelessWidget {
   }
 }
 
-// Paypal Icon (text-based P logo)
 class _PaypalIcon extends StatelessWidget {
   final bool isDarkMode;
   const _PaypalIcon({required this.isDarkMode});
@@ -309,7 +309,6 @@ class _PaypalIcon extends StatelessWidget {
   }
 }
 
-// Google Pay Icon (GP text logo)
 class _GooglePayIcon extends StatelessWidget {
   final bool isDarkMode;
   const _GooglePayIcon({required this.isDarkMode});

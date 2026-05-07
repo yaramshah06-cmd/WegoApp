@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
+import 'app_translations.dart';
 
 class MediaEditingScreen extends StatefulWidget {
   final String? imagePath;
@@ -42,6 +43,8 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final lang = Localizations.localeOf(context).languageCode;
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
@@ -51,14 +54,15 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
             child: widget.imagePath != null
                 ? Image.file(File(widget.imagePath!), fit: BoxFit.cover)
                 : widget.videoPath != null
-                    ? Container(
-                        color: Colors.black,
-                        child: const Center(
-                          child: Icon(Icons.videocam, size: 100, color: Colors.white),
-                        ),
-                      )
-                    : Container(),
+                ? Container(
+              color: Colors.black,
+              child: const Center(
+                child: Icon(Icons.videocam, size: 100, color: Colors.white),
+              ),
+            )
+                : Container(),
           ),
+
           // Top Bar
           Positioned(
             top: 0,
@@ -78,11 +82,11 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
                       children: [
                         IconButton(
                           icon: const Icon(Icons.crop, color: Colors.white),
-                          onPressed: _showCropOptions,
+                          onPressed: () => _showCropOptions(lang),
                         ),
                         IconButton(
                           icon: const Icon(Icons.edit, color: Colors.white),
-                          onPressed: _showTextEditor,
+                          onPressed: () => _showTextEditor(lang),
                         ),
                         IconButton(
                           icon: const Icon(Icons.save, color: Colors.white),
@@ -95,21 +99,20 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
               ),
             ),
           ),
+
           // Filter Bar
           Positioned(
             right: 0,
             top: 100,
             bottom: 200,
-            child: Container(
+            child: SizedBox(
               width: 70,
               child: ListView.builder(
                 itemCount: _filters.length,
                 itemBuilder: (context, index) {
                   final filter = _filters[index];
                   return GestureDetector(
-                    onTap: () {
-                      setState(() => _currentFilterIndex = index);
-                    },
+                    onTap: () => setState(() => _currentFilterIndex = index),
                     child: Container(
                       margin: const EdgeInsets.symmetric(vertical: 4),
                       decoration: BoxDecoration(
@@ -118,17 +121,14 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
                             : Colors.transparent,
                         shape: BoxShape.circle,
                       ),
-                      child: Icon(
-                        filter['icon'],
-                        color: Colors.white,
-                        size: 24,
-                      ),
+                      child: Icon(filter['icon'], color: Colors.white, size: 24),
                     ),
                   );
                 },
               ),
             ),
           ),
+
           // Filter Search Icon
           Positioned(
             right: 20,
@@ -140,11 +140,12 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
               ),
               child: IconButton(
                 icon: const Icon(Icons.search, color: Colors.white),
-                onPressed: _showFilterSearch,
+                onPressed: () => _showFilterSearch(lang),
               ),
             ),
           ),
-          // Caption and Stickers
+
+          // Stickers Panel
           if (_showStickers)
             Positioned(
               bottom: 150,
@@ -160,7 +161,7 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
                       child: TextField(
                         style: const TextStyle(color: Colors.white),
                         decoration: InputDecoration(
-                          hintText: 'Search stickers...',
+                          hintText: AppTranslations.translate('search_stickers', lang),
                           hintStyle: const TextStyle(color: Colors.grey),
                           prefixIcon: const Icon(Icons.search, color: Colors.white),
                           border: OutlineInputBorder(
@@ -178,9 +179,7 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
                         itemCount: _stickers.length,
                         itemBuilder: (context, index) {
                           return GestureDetector(
-                            onTap: () {
-                              // Add sticker to media
-                            },
+                            onTap: () {},
                             child: Text(
                               _stickers[index],
                               style: const TextStyle(fontSize: 32),
@@ -193,6 +192,7 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
                 ),
               ),
             ),
+
           // Bottom Controls
           Positioned(
             bottom: 0,
@@ -215,7 +215,7 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
                           child: TextField(
                             style: const TextStyle(color: Colors.white),
                             decoration: InputDecoration(
-                              hintText: 'Add caption...',
+                              hintText: AppTranslations.translate('add_caption', lang),
                               hintStyle: const TextStyle(color: Colors.grey),
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(20),
@@ -226,9 +226,7 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
                         ),
                         IconButton(
                           icon: const Icon(Icons.emoji_emotions, color: Colors.white),
-                          onPressed: () {
-                            setState(() => _showStickers = !_showStickers);
-                          },
+                          onPressed: () => setState(() => _showStickers = !_showStickers),
                         ),
                       ],
                     ),
@@ -236,7 +234,10 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
                     // Quality Selection
                     Row(
                       children: [
-                        const Text('Quality: ', style: TextStyle(color: Colors.white)),
+                        Text(
+                          AppTranslations.translate('quality', lang),
+                          style: const TextStyle(color: Colors.white),
+                        ),
                         GestureDetector(
                           onTap: () => setState(() => _isHD = false),
                           child: Container(
@@ -245,7 +246,10 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
                               color: !_isHD ? kPurple : Colors.grey,
                               borderRadius: BorderRadius.circular(20),
                             ),
-                            child: const Text('Standard', style: TextStyle(color: Colors.white)),
+                            child: Text(
+                              AppTranslations.translate('standard', lang),
+                              style: const TextStyle(color: Colors.white),
+                            ),
                           ),
                         ),
                         const SizedBox(width: 10),
@@ -257,7 +261,10 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
                               color: _isHD ? kPurple : Colors.grey,
                               borderRadius: BorderRadius.circular(20),
                             ),
-                            child: const Text('HD', style: TextStyle(color: Colors.white)),
+                            child: Text(
+                              AppTranslations.translate('hd', lang),
+                              style: const TextStyle(color: Colors.white),
+                            ),
                           ),
                         ),
                         const Spacer(),
@@ -270,7 +277,10 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
                               borderRadius: BorderRadius.circular(20),
                             ),
                           ),
-                          child: const Text('Send', style: TextStyle(color: Colors.white)),
+                          child: Text(
+                            AppTranslations.translate('send', lang),
+                            style: const TextStyle(color: Colors.white),
+                          ),
                         ),
                       ],
                     ),
@@ -284,7 +294,7 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
     );
   }
 
-  void _showCropOptions() {
+  void _showCropOptions(String lang) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -294,15 +304,18 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Crop Options', style: TextStyle(color: Colors.white, fontSize: 18)),
+            Text(
+              AppTranslations.translate('crop_options', lang),
+              style: const TextStyle(color: Colors.white, fontSize: 18),
+            ),
             const SizedBox(height: 20),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                _CropOption(icon: Icons.crop_square, label: 'Square', onTap: () {}),
-                _CropOption(icon: Icons.crop_landscape, label: 'Landscape', onTap: () {}),
-                _CropOption(icon: Icons.crop_portrait, label: 'Portrait', onTap: () {}),
-                _CropOption(icon: Icons.crop_free, label: 'Free', onTap: () {}),
+                _CropOption(icon: Icons.crop_square, label: AppTranslations.translate('square', lang), onTap: () {}),
+                _CropOption(icon: Icons.crop_landscape, label: AppTranslations.translate('landscape', lang), onTap: () {}),
+                _CropOption(icon: Icons.crop_portrait, label: AppTranslations.translate('portrait', lang), onTap: () {}),
+                _CropOption(icon: Icons.crop_free, label: AppTranslations.translate('free', lang), onTap: () {}),
               ],
             ),
           ],
@@ -311,7 +324,7 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
     );
   }
 
-  void _showTextEditor() {
+  void _showTextEditor(String lang) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -321,12 +334,15 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Add Text', style: TextStyle(color: Colors.white, fontSize: 18)),
+            Text(
+              AppTranslations.translate('add_text', lang),
+              style: const TextStyle(color: Colors.white, fontSize: 18),
+            ),
             const SizedBox(height: 20),
             TextField(
               style: const TextStyle(color: Colors.white),
               decoration: InputDecoration(
-                hintText: 'Enter text...',
+                hintText: AppTranslations.translate('enter_text', lang),
                 hintStyle: const TextStyle(color: Colors.grey),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
@@ -336,10 +352,11 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
             const SizedBox(height: 20),
             ElevatedButton(
               onPressed: () => Navigator.pop(context),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: kPurple,
+              style: ElevatedButton.styleFrom(backgroundColor: kPurple),
+              child: Text(
+                AppTranslations.translate('add', lang),
+                style: const TextStyle(color: Colors.white),
               ),
-              child: const Text('Add', style: TextStyle(color: Colors.white)),
             ),
           ],
         ),
@@ -348,22 +365,24 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
   }
 
   void _saveMedia() {
-    // Save to gallery with HD or Standard quality
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Saved in ${_isHD ? 'HD' : 'Standard'} quality')),
     );
   }
 
-  void _showFilterSearch() {
+  void _showFilterSearch(String lang) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: Colors.black87,
-        title: const Text('Search Filters', style: TextStyle(color: Colors.white)),
+        title: Text(
+          AppTranslations.translate('search_filters', lang),
+          style: const TextStyle(color: Colors.white),
+        ),
         content: TextField(
           style: const TextStyle(color: Colors.white),
           decoration: InputDecoration(
-            hintText: 'Search filters...',
+            hintText: AppTranslations.translate('search_filters_hint', lang),
             hintStyle: const TextStyle(color: Colors.grey),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(10),
@@ -373,7 +392,10 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Close', style: TextStyle(color: Colors.white)),
+            child: Text(
+              AppTranslations.translate('close', lang),
+              style: const TextStyle(color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -389,7 +411,6 @@ class _MediaEditingScreenState extends State<MediaEditingScreen> {
   }
 
   void _sendMedia() {
-    // Send media with caption and quality
     Navigator.pop(context);
   }
 }

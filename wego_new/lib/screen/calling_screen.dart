@@ -1,17 +1,33 @@
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:wego_marriage/screen/video_call_screen.dart';
+import 'package:wego_marriage/screen/voice_call_screen.dart';
 import 'webrtc_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:async';
 import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../providers/settings_provider.dart';
-
-// ── Colors ────────────────────────────────────────────────────
+import 'app_localizations.dart';
+import 'app_translations.dart';
 const Color kPurple = Color(0xFF6B4EFF);
 const Color kRed = Color(0xFFE8405A);
 
-// ── Calling Screen ────────────────────────────────────────────
 class CallingScreen extends StatefulWidget {
-  const CallingScreen({super.key});
+  final String callId;
+  final String receiverId;
+  final String receiverName;
+  final String receiverImage;
+  final String callType;
+
+  const CallingScreen({
+    super.key,
+    required this.callId,
+    required this.receiverId,
+    required this.receiverName,
+    required this.receiverImage,
+    required this.callType,
+  });
 
   @override
   State<CallingScreen> createState() => _CallingScreenState();
@@ -19,26 +35,36 @@ class CallingScreen extends StatefulWidget {
 
 class _CallingScreenState extends State<CallingScreen>
     with TickerProviderStateMixin {
-  // Pulsing ring animation
+
   late AnimationController _pulseCtrl;
   late Animation<double> _pulseAnim;
-
-  // Dots animation for "CALLING........"
   late Timer _dotsTimer;
   int _dotCount = 0;
-
-  // Mute state
   bool _isMuted = false;
   bool _isVideoOff = false;
-
-  // Vibration timer
   Timer? _vibrationTimer;
+  Timer? _callTimeoutTimer;
+  bool _callAccepted = false;
+  bool _isNavigating = false;
+  StreamSubscription? _callStatusSubscription;
+
+  String get _myUserId =>
+      FirebaseAuth.instance.currentUser?.uid ?? '';
+
+  // ✅ callType ke hisaab se sahi roomId banao
+  String get _roomId {
+    final ids = [_myUserId, widget.receiverId]..sort();
+    if (widget.callType == 'video') {
+      return '${ids[0]}_${ids[1]}_video';
+    } else {
+      return '${ids[0]}_${ids[1]}_voice';
+    }
+  }
 
   @override
   void initState() {
     super.initState();
 
-    // Pulse animation
     _pulseCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1200),
@@ -48,22 +74,183 @@ class _CallingScreenState extends State<CallingScreen>
       CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
     );
 
-    // Dots timer
     _dotsTimer = Timer.periodic(const Duration(milliseconds: 400), (_) {
-      setState(() {
-        _dotCount = (_dotCount + 1) % 9;
-      });
+      if (mounted) {
+        setState(() => _dotCount = (_dotCount + 1) % 9);
+      }
     });
 
-    // Vibration logic
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final settings = context.read<SettingsProvider>();
       if (settings.vibrate) {
-        _vibrationTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+        _vibrationTimer = Timer.periodic(const Duration(seconds: 2), (_) {
           HapticFeedback.heavyImpact();
         });
       }
     });
+
+    _createCallInFirestore();
+    _listenForCallStatus();
+    _startCallTimeout();
+  }
+
+  Future<void> _createCallInFirestore() async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('calls')
+          .doc(widget.callId)
+          .set({
+        'callId': widget.callId,
+        'callerId': _myUserId,
+        'receiverId': widget.receiverId,
+        'receiverName': widget.receiverName,
+        'receiverImage': widget.receiverImage,
+        'status': 'ringing',
+        'callType': widget.callType,
+        'type': widget.callType,
+        'roomId': _roomId, // ✅ Sahi roomId bhi save karo
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+
+      print('✅ Call created: ${widget.callId} | roomId: $_roomId');
+    } catch (e) {
+      print('❌ Call create error: $e');
+    }
+  }
+
+  void _listenForCallStatus() {
+    _callStatusSubscription = FirebaseFirestore.instance
+        .collection('calls')
+        .doc(widget.callId)
+        .snapshots()
+        .listen((snapshot) async {
+
+      if (!mounted) return;
+
+      if (!snapshot.exists) {
+        print('📵 Call document delete ho gaya');
+        if (!_callAccepted) _endCallCleanup();
+        return;
+      }
+
+      final data = snapshot.data()!;
+      final status = data['status'] as String? ?? '';
+
+      print('📞 Call status: $status');
+
+      if (status == 'accepted' && !_callAccepted && !_isNavigating) {
+        setState(() {
+          _callAccepted = true;
+          _isNavigating = true;
+        });
+        _callTimeoutTimer?.cancel();
+        _navigateToCallScreen();
+
+      } else if (status == 'declined') {
+        print('📵 Call decline ho gayi');
+        try {
+          await FirebaseFirestore.instance
+              .collection('calls')
+              .doc(widget.callId)
+              .delete();
+          print('🗑️ Declined call deleted');
+        } catch (e) {
+          print('❌ Delete error: $e');
+        }
+        _endCallCleanup();
+
+      } else if (status == 'ended') {
+        print('📵 Call khatam');
+        try {
+          await FirebaseFirestore.instance
+              .collection('calls')
+              .doc(widget.callId)
+              .delete();
+          print('🗑️ Ended call deleted');
+        } catch (e) {
+          print('❌ Delete error: $e');
+        }
+        _endCallCleanup();
+      }
+    });
+  }
+
+  void _navigateToCallScreen() {
+    if (!mounted) return;
+
+    _callStatusSubscription?.cancel();
+    _vibrationTimer?.cancel();
+
+    print('🚀 Navigate to ${widget.callType} call | roomId: $_roomId');
+
+    // ✅ _roomId mein ab sahi _voice ya _video suffix hai
+    final route = MaterialPageRoute(
+      builder: (_) => widget.callType == 'video'
+          ? VideoCallScreen(
+        remoteUserId: widget.receiverId,
+        remoteUserName: widget.receiverName,
+        remoteUserImage: widget.receiverImage,
+        roomId: _roomId, // ✅ _video wala roomId
+      )
+          : VoiceCallScreen(
+        remoteUserId: widget.receiverId,
+        remoteUserName: widget.receiverName,
+        remoteUserImage: widget.receiverImage,
+        roomId: _roomId, // ✅ _voice wala roomId
+      ),
+    );
+
+    Navigator.of(context).pushReplacement(route);
+  }
+
+  void _startCallTimeout() {
+    _callTimeoutTimer = Timer(const Duration(seconds: 30), () {
+      if (!_callAccepted && mounted) {
+        print('⏰ Call timeout');
+        _endCall();
+      }
+    });
+  }
+
+  Future<void> _endCall() async {
+    if (!mounted) return;
+
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('calls')
+          .doc(widget.callId)
+          .get();
+
+      if (doc.exists) {
+        await FirebaseFirestore.instance
+            .collection('calls')
+            .doc(widget.callId)
+            .update({'status': 'cancelled'});
+
+        await Future.delayed(const Duration(seconds: 1));
+
+        await FirebaseFirestore.instance
+            .collection('calls')
+            .doc(widget.callId)
+            .delete();
+      }
+
+      print('🗑️ Call document deleted');
+    } catch (e) {
+      print('❌ Delete error: $e');
+    }
+
+    _endCallCleanup();
+  }
+
+  void _endCallCleanup() {
+    _callStatusSubscription?.cancel();
+    _callTimeoutTimer?.cancel();
+    _vibrationTimer?.cancel();
+
+    if (mounted) {
+      Navigator.of(context).pop();
+    }
   }
 
   @override
@@ -71,6 +258,8 @@ class _CallingScreenState extends State<CallingScreen>
     _pulseCtrl.dispose();
     _dotsTimer.cancel();
     _vibrationTimer?.cancel();
+    _callStatusSubscription?.cancel();
+    _callTimeoutTimer?.cancel();
     super.dispose();
   }
 
@@ -81,7 +270,7 @@ class _CallingScreenState extends State<CallingScreen>
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle(
+      value: const SystemUiOverlayStyle(
         statusBarColor: kPurple,
         statusBarIconBrightness: Brightness.light,
       ),
@@ -89,41 +278,40 @@ class _CallingScreenState extends State<CallingScreen>
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         body: Column(
           children: [
-            // Status bar
             Container(
               color: kPurple,
               height: MediaQuery.of(context).padding.top,
             ),
-
-            // ── Main content ──
             Expanded(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   const Spacer(flex: 2),
-
-                  // ── Avatar with pulsing gradient ring ──
                   _buildPulsingAvatar(),
-
-                  const SizedBox(height: 40),
-
-                  // ── CALLING......... ──
+                  const SizedBox(height: 20),
+                  Text(
+                    widget.receiverName,
+                    style: TextStyle(
+                      color: isDark ? Colors.white : Colors.black87,
+                      fontSize: 26,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   Text(
                     'CALLING$_dotsText',
                     style: TextStyle(
-                      color: isDark ? Colors.white : Colors.black87,
-                      fontSize: 22,
+                      color: isDark ? Colors.white60 : Colors.black54,
+                      fontSize: 18,
                       fontWeight: FontWeight.w400,
                       letterSpacing: 3,
                     ),
                   ),
-
                   const Spacer(flex: 3),
-
-                  // ── Action Buttons ──
                   _buildActionBar(isDark),
-
-                  SizedBox(height: MediaQuery.of(context).padding.bottom + 20),
+                  SizedBox(
+                    height: MediaQuery.of(context).padding.bottom + 20,
+                  ),
                 ],
               ),
             ),
@@ -133,15 +321,11 @@ class _CallingScreenState extends State<CallingScreen>
     );
   }
 
-  // ── Pulsing Avatar ────────────────────────────────────────────
   Widget _buildPulsingAvatar() {
     return AnimatedBuilder(
       animation: _pulseAnim,
       builder: (context, child) {
-        return Transform.scale(
-          scale: _pulseAnim.value,
-          child: child,
-        );
+        return Transform.scale(scale: _pulseAnim.value, child: child);
       },
       child: Container(
         width: 150,
@@ -159,41 +343,30 @@ class _CallingScreenState extends State<CallingScreen>
               blurRadius: 24,
               spreadRadius: 4,
             ),
-            BoxShadow(
-              color: kRed.withValues(alpha: 0.3),
-              blurRadius: 16,
-              spreadRadius: 2,
-            ),
           ],
         ),
         padding: const EdgeInsets.all(4),
         child: ClipOval(
-          child: Image.network(
-            'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=400',
+          child: widget.receiverImage.isNotEmpty
+              ? Image.network(
+            widget.receiverImage,
             fit: BoxFit.cover,
-            loadingBuilder: (ctx, child, progress) {
-              if (progress == null) return child;
-              return Container(
-                color: Colors.grey[800],
-                child: const Center(
-                  child: CircularProgressIndicator(
-                    color: Colors.white54,
-                    strokeWidth: 2,
-                  ),
-                ),
-              );
-            },
-            errorBuilder: (context, error, stackTrace) => Container(
+            errorBuilder: (_, __, ___) => Container(
               color: Colors.grey[800],
-              child: const Icon(Icons.person, color: Colors.white54, size: 60),
+              child: const Icon(Icons.person,
+                  color: Colors.white54, size: 60),
             ),
+          )
+              : Container(
+            color: Colors.grey[800],
+            child: const Icon(Icons.person,
+                color: Colors.white54, size: 60),
           ),
         ),
       ),
     );
   }
 
-  // ── Action Bar ────────────────────────────────────────────────
   Widget _buildActionBar(bool isDark) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -206,7 +379,6 @@ class _CallingScreenState extends State<CallingScreen>
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            // ── Mute / Audio ──
             GestureDetector(
               onTap: () => setState(() => _isMuted = !_isMuted),
               child: Container(
@@ -214,19 +386,19 @@ class _CallingScreenState extends State<CallingScreen>
                 height: 56,
                 decoration: BoxDecoration(
                   color: _isMuted
-                      ? (isDark ? Colors.white.withValues(alpha: 0.15) : Colors.black.withValues(alpha: 0.1))
+                      ? (isDark
+                      ? Colors.white.withValues(alpha: 0.15)
+                      : Colors.black.withValues(alpha: 0.1))
                       : Colors.transparent,
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
-                  _isMuted ? Icons.mic_off : Icons.phone_outlined,
+                  _isMuted ? Icons.mic_off : Icons.mic,
                   color: isDark ? Colors.white : Colors.black87,
                   size: 26,
                 ),
               ),
             ),
-
-            // ── Video ──
             GestureDetector(
               onTap: () => setState(() => _isVideoOff = !_isVideoOff),
               child: Container(
@@ -234,7 +406,9 @@ class _CallingScreenState extends State<CallingScreen>
                 height: 56,
                 decoration: BoxDecoration(
                   color: _isVideoOff
-                      ? (isDark ? Colors.white.withValues(alpha: 0.15) : Colors.black.withValues(alpha: 0.1))
+                      ? (isDark
+                      ? Colors.white.withValues(alpha: 0.15)
+                      : Colors.black.withValues(alpha: 0.1))
                       : Colors.transparent,
                   shape: BoxShape.circle,
                 ),
@@ -247,10 +421,8 @@ class _CallingScreenState extends State<CallingScreen>
                 ),
               ),
             ),
-
-            // ── End Call (Red) ──
             GestureDetector(
-              onTap: () => Navigator.of(context).pop(),
+              onTap: _endCall,
               child: Container(
                 width: 56,
                 height: 56,
@@ -265,11 +437,8 @@ class _CallingScreenState extends State<CallingScreen>
                     ),
                   ],
                 ),
-                child: const Icon(
-                  Icons.call_end,
-                  color: Colors.white,
-                  size: 26,
-                ),
+                child: const Icon(Icons.call_end,
+                    color: Colors.white, size: 26),
               ),
             ),
           ],

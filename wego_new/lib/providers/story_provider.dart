@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+
+// ─── Models ───────────────────────────────────────────────────────────────────
 
 class StoryItem {
   final String id;
@@ -15,14 +19,14 @@ class StoryItem {
 }
 
 class UserStory {
-  final String userId;
+  final String userId;      // ✅ required field — error fix
   final String username;
   final String avatarUrl;
   final List<StoryItem> stories;
   bool isWatched;
 
   UserStory({
-    required this.userId,
+    required this.userId,   // ✅ required
     required this.username,
     required this.avatarUrl,
     required this.stories,
@@ -30,104 +34,106 @@ class UserStory {
   });
 }
 
-class StoryProvider with ChangeNotifier {
-  final List<UserStory> _userStories = [
-    UserStory(
-      userId: 'u1',
-      username: 'Sarah',
-      avatarUrl: 'https://randomuser.me/api/portraits/women/44.jpg',
-      stories: [
-        StoryItem(
-          id: 's1_1',
-          imageUrl: 'https://randomuser.me/api/portraits/women/44.jpg',
-          username: 'Sarah',
-          avatarUrl: 'https://randomuser.me/api/portraits/women/44.jpg',
-        ),
-        StoryItem(
-          id: 's1_2',
-          imageUrl: 'https://picsum.photos/seed/story1/800/1200',
-          username: 'Sarah',
-          avatarUrl: 'https://randomuser.me/api/portraits/women/44.jpg',
-        ),
-        StoryItem(
-          id: 's1_3',
-          imageUrl: 'https://picsum.photos/seed/story2/800/1200',
-          username: 'Sarah',
-          avatarUrl: 'https://randomuser.me/api/portraits/women/44.jpg',
-        ),
-      ],
-    ),
-    UserStory(
-      userId: 'u2',
-      username: 'John',
-      avatarUrl: 'https://randomuser.me/api/portraits/men/32.jpg',
-      stories: [
-        StoryItem(
-          id: 's2_1',
-          imageUrl: 'https://randomuser.me/api/portraits/men/32.jpg',
-          username: 'John',
-          avatarUrl: 'https://randomuser.me/api/portraits/men/32.jpg',
-        ),
-        StoryItem(
-          id: 's2_2',
-          imageUrl: 'https://picsum.photos/seed/story3/800/1200',
-          username: 'John',
-          avatarUrl: 'https://randomuser.me/api/portraits/men/32.jpg',
-        ),
-      ],
-    ),
-    UserStory(
-      userId: 'u3',
-      username: 'Emma',
-      avatarUrl: 'https://randomuser.me/api/portraits/women/68.jpg',
-      stories: [
-        StoryItem(
-          id: 's3_1',
-          imageUrl: 'https://randomuser.me/api/portraits/women/68.jpg',
-          username: 'Emma',
-          avatarUrl: 'https://randomuser.me/api/portraits/women/68.jpg',
-        ),
-      ],
-    ),
-    UserStory(
-      userId: 'u4',
-      username: 'Mike',
-      avatarUrl: 'https://randomuser.me/api/portraits/men/45.jpg',
-      stories: [
-        StoryItem(
-          id: 's4_1',
-          imageUrl: 'https://randomuser.me/api/portraits/men/45.jpg',
-          username: 'Mike',
-          avatarUrl: 'https://randomuser.me/api/portraits/men/45.jpg',
-        ),
-        StoryItem(
-          id: 's4_2',
-          imageUrl: 'https://picsum.photos/seed/story4/800/1200',
-          username: 'Mike',
-          avatarUrl: 'https://randomuser.me/api/portraits/men/45.jpg',
-        ),
-      ],
-    ),
-    UserStory(
-      userId: 'u5',
-      username: 'Lisa',
-      avatarUrl: 'https://randomuser.me/api/portraits/women/55.jpg',
-      stories: [
-        StoryItem(
-          id: 's5_1',
-          imageUrl: 'https://randomuser.me/api/portraits/women/55.jpg',
-          username: 'Lisa',
-          avatarUrl: 'https://randomuser.me/api/portraits/women/55.jpg',
-        ),
-      ],
-    ),
-  ];
+// ─── Provider ─────────────────────────────────────────────────────────────────
 
+class StoryProvider with ChangeNotifier {
+  List<UserStory> _userStories = [];
+  bool isLoading = false;
+
+  StoryProvider() {
+    fetchStories();
+  }
+
+  /// Unwatched pehle, phir watched
   List<UserStory> get userStories {
-    // Return stories sorted: Unwatched first, then Watched
     final unwatched = _userStories.where((u) => !u.isWatched).toList();
-    final watched = _userStories.where((u) => u.isWatched).toList();
+    final watched   = _userStories.where((u) =>  u.isWatched).toList();
     return [...unwatched, ...watched];
+  }
+
+  /// Firebase se real stories fetch karo — koi dummy data nahi
+  Future<void> fetchStories() async {
+    isLoading = true;
+    notifyListeners();
+
+    try {
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser == null) {
+        isLoading = false;
+        notifyListeners();
+        return;
+      }
+
+      // Sirf last 24 ghante ki stories
+      final since = Timestamp.fromDate(
+        DateTime.now().subtract(const Duration(hours: 24)),
+      );
+
+      final snapshot = await FirebaseFirestore.instance
+          .collection('stories')
+          .where('createdAt', isGreaterThan: since)
+          .orderBy('createdAt', descending: false)
+          .get();
+
+      // userId ke hisaab se group karo
+      final Map<String, List<StoryItem>> grouped = {};
+      final Map<String, Map<String, dynamic>> userCache = {};
+
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final String uid = data['userId'] ?? '';
+        if (uid.isEmpty) continue;
+
+        // Us user ki info ek baar fetch karo
+        if (!userCache.containsKey(uid)) {
+          final userDoc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(uid)
+              .get();
+          userCache[uid] = userDoc.data() ?? {};
+        }
+
+        final userData = userCache[uid]!;
+        final item = StoryItem(
+          id: doc.id,
+          imageUrl: data['imageUrl'] ?? '',
+          username: userData['username'] ?? 'Unknown',
+          avatarUrl: userData['photoUrl'] ?? '',
+        );
+
+        grouped.putIfAbsent(uid, () => []);
+        grouped[uid]!.add(item);
+      }
+
+      // UserStory list banao
+      final List<UserStory> fetched = [];
+      for (final entry in grouped.entries) {
+        final uid      = entry.key;
+        final userData = userCache[uid] ?? {};
+
+        fetched.add(UserStory(
+          userId:    uid,                               // ✅ userId pass — error fix
+          username:  userData['username'] ?? 'Unknown',
+          avatarUrl: userData['photoUrl'] ?? '',
+          stories:   entry.value,
+          isWatched: false,
+        ));
+      }
+
+      // Apni story sab se pehle
+      fetched.sort((a, b) {
+        if (a.userId == currentUser.uid) return -1;
+        if (b.userId == currentUser.uid) return 1;
+        return 0;
+      });
+
+      _userStories = fetched;
+    } catch (e) {
+      debugPrint('Story fetch error: $e');
+    } finally {
+      isLoading = false;
+      notifyListeners();
+    }
   }
 
   void markAsWatched(String userId) {
@@ -137,4 +143,7 @@ class StoryProvider with ChangeNotifier {
       notifyListeners();
     }
   }
+
+  /// Bahar se refresh karne ke liye (pull-to-refresh etc.)
+  Future<void> refresh() => fetchStories();
 }

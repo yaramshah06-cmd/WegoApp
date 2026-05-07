@@ -11,6 +11,8 @@ android {
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
+        // ✅ Desugaring enable karo — flutter_local_notifications ke liye zaroori
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -37,7 +39,15 @@ android {
 flutter {
     source = "../.."
 }
+
 dependencies {
+    // ✅ Desugaring library — compileOptions ke saath zaroori hai
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+
+    // Firebase
     implementation(platform("com.google.firebase:firebase-bom:34.12.0"))
     implementation("com.google.firebase:firebase-analytics")
+
+    // Facebook SDK
+    implementation("com.facebook.android:facebook-android-sdk:latest.release")
 }

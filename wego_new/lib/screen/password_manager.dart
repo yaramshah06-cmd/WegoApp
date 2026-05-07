@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
+import 'app_localizations.dart';
+import 'app_translations.dart';
 class PasswordManagerScreen extends StatefulWidget {
   const PasswordManagerScreen({super.key});
 
