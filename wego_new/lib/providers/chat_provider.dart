@@ -19,6 +19,7 @@ class ChatUser {
   bool isFromMe;
   bool isSeen;
   bool isOnline;
+  bool isPinned;
 
   ChatUser({
     required this.id,
@@ -34,6 +35,7 @@ class ChatUser {
     this.isFromMe = false,
     this.isSeen = false,
     this.isOnline = false,
+    this.isPinned = false,
   });
 
   String get formattedLastMessage {
@@ -79,6 +81,12 @@ class ChatProvider extends ChangeNotifier {
   // ✅ Realtime listener subscription
   StreamSubscription? _realtimeSubscription;
 
+  // ✅ Pinned chats realtime listener
+  StreamSubscription? _pinnedSubscription;
+
+  // ✅ Currently pinned chat room IDs for this user
+  final Set<String> _pinnedChatIds = {};
+
   // ✅ Jin chats ko user ne dekh liya — listener inhe 0 pe rakhe
   final Set<String> _seenChatIds = {};
 
@@ -118,6 +126,7 @@ class ChatProvider extends ChangeNotifier {
     if (currentUser == null) return;
 
     _realtimeSubscription?.cancel();
+    _startPinnedListener(currentUser.uid);
 
     FirebaseDatabase.instance.ref('chats').onValue.listen((event) {
       if (!event.snapshot.exists) {
@@ -181,7 +190,78 @@ class ChatProvider extends ChangeNotifier {
   void _stopRealtimeListener() {
     _realtimeSubscription?.cancel();
     _realtimeSubscription = null;
+    _pinnedSubscription?.cancel();
+    _pinnedSubscription = null;
+    _pinnedChatIds.clear();
   }
+
+  // ══════════════════════════════════════════════════════════
+  //  Pinned chats realtime listener
+  //  Path: users/{uid}/pinnedChats/{chatRoomId} = true
+  // ══════════════════════════════════════════════════════════
+  void _startPinnedListener(String uid) {
+    _pinnedSubscription?.cancel();
+    _pinnedSubscription = FirebaseDatabase.instance
+        .ref('users/$uid/pinnedChats')
+        .onValue
+        .listen((event) {
+      _pinnedChatIds.clear();
+      if (event.snapshot.exists && event.snapshot.value != null) {
+        try {
+          final data = Map<String, dynamic>.from(event.snapshot.value as Map);
+          for (final entry in data.entries) {
+            if (entry.value == true) _pinnedChatIds.add(entry.key);
+          }
+        } catch (e) {
+          debugPrint('Pinned listener parse error: $e');
+        }
+      }
+      for (final chat in _chats) {
+        chat.isPinned = _pinnedChatIds.contains(chat.id);
+      }
+      _sortChats();
+      notifyListeners();
+    });
+  }
+
+  void _sortChats() {
+    _chats.sort((a, b) {
+      if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
+      return b.timestamp.compareTo(a.timestamp);
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════
+  //  setChatPinned() — chat ko top par lagao / hatao (realtime)
+  // ══════════════════════════════════════════════════════════
+  Future<void> setChatPinned(String chatRoomId, bool pinned) async {
+    if (chatRoomId.isEmpty) return;
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) return;
+
+    if (pinned) {
+      _pinnedChatIds.add(chatRoomId);
+    } else {
+      _pinnedChatIds.remove(chatRoomId);
+    }
+    final idx = _chats.indexWhere((c) => c.id == chatRoomId);
+    if (idx >= 0) {
+      _chats[idx].isPinned = pinned;
+    }
+    _sortChats();
+    notifyListeners();
+
+    try {
+      await FirebaseDatabase.instance
+          .ref('users/${currentUser.uid}/pinnedChats/$chatRoomId')
+          .set(pinned ? true : null);
+    } catch (e) {
+      debugPrint('setChatPinned error: $e');
+    }
+  }
+
+  bool isChatPinned(String chatRoomId) =>
+      _pinnedChatIds.contains(chatRoomId);
 
   // ══════════════════════════════════════════════════════════
   //  loadChats() — pehli baar chats load karo
@@ -276,7 +356,10 @@ class ChatProvider extends ChangeNotifier {
       }
 
       _chats = mergedMap.values.toList();
-      _chats.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      for (final chat in _chats) {
+        chat.isPinned = _pinnedChatIds.contains(chat.id);
+      }
+      _sortChats();
       notifyListeners();
 
       debugPrint('Chats loaded: ${_chats.length}');
@@ -354,10 +437,12 @@ class ChatProvider extends ChangeNotifier {
           messageType: messageType,
           isFromMe: false,
           isSeen: false,
+          isPinned: _pinnedChatIds.contains('dyn_$receiverUid'),
         ),
       );
     }
 
+    _sortChats();
     notifyListeners();
   }
 
@@ -401,10 +486,12 @@ class ChatProvider extends ChangeNotifier {
           messageType: messageType,
           isFromMe: true,
           isSeen: false,
+          isPinned: _pinnedChatIds.contains('dyn_$receiverUid'),
         ),
       );
     }
 
+    _sortChats();
     notifyListeners();
   }
 

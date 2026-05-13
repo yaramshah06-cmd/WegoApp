@@ -16,6 +16,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart' as vt;
 import 'package:wego_marriage/services/local_storage_service.dart';
+import 'xp_service.dart';
 import 'app_localizations.dart';
 import 'app_translations.dart';
 // ─── Enums ───────────────────────────────────────────────────
@@ -1886,23 +1887,23 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
                 decoration: BoxDecoration(
                     color: Colors.grey[300],
                     borderRadius: BorderRadius.circular(2))),
-            const Padding(
-                padding: EdgeInsets.all(16),
-                child: Text('Who can see this?',
-                    style: TextStyle(
+            Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(context.tr('who_can_see_this'),
+                    style: const TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold))),
-            _visibilityOption(Icons.public, 'Everyone',
-                'Visible to all users', PostVisibility.everyone, ctx),
+            _visibilityOption(Icons.public, context.tr('everyone'),
+                context.tr('visible_to_all_users'), PostVisibility.everyone, ctx),
             _visibilityOption(
                 Icons.people,
-                'Close Friends',
-                'Only people you follow',
+                context.tr('close_friends'),
+                context.tr('only_people_you_follow'),
                 PostVisibility.closeFriends,
                 ctx,
                 color: const Color(0xFF3DDC84)),
-            _visibilityOption(Icons.lock, 'Only Me',
-                'No one else can see this', PostVisibility.onlyMe, ctx,
+            _visibilityOption(Icons.lock, context.tr('only_me'),
+                context.tr('no_one_else_can_see'), PostVisibility.onlyMe, ctx,
                 color: Colors.orange),
             const SizedBox(height: 16),
           ],
@@ -3199,6 +3200,10 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
         'hasStickers': _selectedStickers.isNotEmpty,
         'stickerEmojis': stickerEmojis,
       });
+
+      // 🎁 +100 XP for creating a post
+      await XPService.addXP(currentUser.uid, XPAction.postBanana);
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('Post share ho gaya! ✅'),
@@ -3777,9 +3782,12 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
                             ),
                           ),
                           const SizedBox(height: 16),
-                          const Text(
-                            'Also share on...',
-                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                          Text(
+                            context.tr('also_share_on'),
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                           const SizedBox(height: 6),
                           Text(
@@ -3921,9 +3929,11 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
                   children: [
                     const Icon(Icons.open_in_new, size: 22, color: Colors.black87),
                     const SizedBox(width: 14),
-                    const Expanded(
-                      child: Text('Also share on...',
-                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+                Expanded(
+                  child: Text(
+                    context.tr('also_share_on'),
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+                  ),
                     ),
                     if (_alsoShareEnabled)
                       Container(
@@ -4021,11 +4031,14 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
                             child: CircularProgressIndicator(
                                 color: Colors.white,
                                 strokeWidth: 2))
-                            : const Text('Share',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 15)),
+                            : Text(
+                          context.tr('share'),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 15,
+                          ),
+                        ),
                       )),
                 ],
               ),

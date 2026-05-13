@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:timeago/timeago.dart' as timeago;
@@ -5,6 +6,7 @@ import 'package:wego_marriage/services/local_storage_service.dart';
 import 'package:wego_marriage/providers/settings_provider.dart';
 import 'package:wego_marriage/screen/user_profile_screen.dart';
 import 'package:wego_marriage/screen/chat_screen.dart';
+import 'package:wego_marriage/screen/xp_service.dart';
 import 'app_localizations.dart';
 import 'app_translations.dart';
 
@@ -115,6 +117,12 @@ class _CommentsScreenState extends State<CommentsScreen> {
     );
 
     await _storage.addComment(widget.postId, newComment);
+
+    // 🎁 +30 XP for posting a comment
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      await XPService.addXP(uid, XPAction.commentKarna);
+    }
 
     setState(() {
       _comments.insert(0, newComment);

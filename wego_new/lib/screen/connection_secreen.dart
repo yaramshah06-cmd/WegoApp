@@ -63,7 +63,6 @@ class MatchUser {
       lastHeartbeat: (d['last_heartbeat'] as Timestamp?)?.toDate(),
       isReadyToMatch: d['is_ready_to_match'] ?? false,
       intentionScore: d['intention_score'] ?? 0,
-      // FIX: bio aur city properly load ho rahe hain
       bio: d['bio'] ?? d['about'] ?? '',
       city: d['city'] ?? d['location'] ?? '',
     );
@@ -77,7 +76,6 @@ class MatchUser {
     return 'offline';
   }
 
-  // FIX: copyWith mein ab bio aur city bhi included hain
   MatchUser copyWith({
     bool? isFollowing,
     bool? isPermanentlyFollowed,
@@ -353,18 +351,15 @@ class _MatchesScreenState extends State<MatchesScreen> {
   StreamSubscription? _requestSub;
   StreamSubscription? _matchSub;
 
-  // FIX: popup guard ko Set banaya — ek saath multiple popups na aayen
   final Set<String> _handledMatchIds = {};
   bool _popupActive = false;
 
-  // FIX: Search aur filter ab actual UI se connected hain
   String _searchQuery = '';
-  String _quickFilter = 'all'; // all | now | recent
+  String _quickFilter = 'all';
   Set<String> _skippedUids = {};
   StreamSubscription? _skippedSub;
   final TextEditingController _searchCtrl = TextEditingController();
 
-  // FIX: Local follow state track karne ke liye map
   final Map<String, bool> _followingMap = {};
 
   @override
@@ -387,7 +382,6 @@ class _MatchesScreenState extends State<MatchesScreen> {
           if (mounted) setState(() => _requestCount = count);
         });
 
-    // FIX: Incoming match stream — duplicate guard ke saath
     _matchSub =
         SmartMatchingManager.incomingMatchStream().listen((snap) {
           for (final doc in snap.docs) {
@@ -442,14 +436,13 @@ class _MatchesScreenState extends State<MatchesScreen> {
 
     setState(() => _popupActive = true);
 
+
     await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => MatchPopupScreen(
-          matchedUserName:
-          otherData['name'] ?? otherData['fullName'] ?? '',
-          matchedUserImage:
-          otherData['photoUrl'] ?? otherData['profileImage'] ?? '',
+          matchedUserName: (otherData['name'] ?? otherData['fullName'] ?? '').toString(),
+          matchedUserImage: (otherData['photoUrl'] ?? otherData['profileImage'] ?? '').toString(),
           matchedUserUid: otherUid,
           onSayHello: () async {
             await SmartMatchingManager.confirmMatch(otherUid);
@@ -459,10 +452,10 @@ class _MatchesScreenState extends State<MatchesScreen> {
               context,
               MaterialPageRoute(
                 builder: (_) => ChatScreen(
-                  username: otherData['name'] ?? '',
-                  avatarUrl: otherData['photoUrl'] ?? '',
-                  lastMessage: 'Say Hello 👋',
-                  receiverUid: otherUid, // ✅ yeh add karo
+                  username: (otherData['name'] ?? '').toString(),
+                  avatarUrl: (otherData['photoUrl'] ?? '').toString(),
+                  lastMessage: context.tr('say_hello'),
+                  receiverUid: otherUid,
                 ),
               ),
             );
@@ -499,18 +492,15 @@ class _MatchesScreenState extends State<MatchesScreen> {
     super.dispose();
   }
 
-  // FIX: Heart tap — open users ke liye direct match, semi ke liye request
   Future<void> _onHeartTap(MatchUser user) async {
     await SmartMatchingManager.addIntentionScore(10);
     await SmartMatchingManager.evaluateReadiness();
 
     if (user.privacyLevel == 'open') {
       await SmartMatchingManager.createDirectMatch(user.uid);
-      // Apna popup local trigger — stream bhi aayega but guard hai
       final myUid = FirebaseAuth.instance.currentUser?.uid;
       if (myUid != null) {
         final matchId = ([myUid, user.uid]..sort()).join('_');
-        // Thoda wait karo Firestore write complete ho
         await Future.delayed(const Duration(milliseconds: 500));
         final matchDoc = await FirebaseFirestore.instance
             .collection('active_matches')
@@ -523,18 +513,18 @@ class _MatchesScreenState extends State<MatchesScreen> {
       }
     } else if (user.privacyLevel == 'semi') {
       await SmartMatchingManager.sendConnectRequest(user.uid);
-      _showSnack('📨 Request sent to ${user.name}');
+      _showSnack('📨 ${context.tr('request_sent')} ${user.name}');
     }
   }
 
-  // FIX: Skip actually kaam karta hai ab
   Future<void> _onSkip(MatchUser user) async {
+
     await SmartMatchingManager.skipUser(user.uid);
-    _showSnack('Skipped ${user.name}');
+    _showSnack('${context.tr('skipped')} ${user.name}');
   }
 
-  // FIX: Follow toggle properly kaam karta hai with local state update
   Future<void> _onFollowToggle(MatchUser user) async {
+
     final currentlyFollowing =
         _followingMap[user.uid] ?? await SmartMatchingManager.isFollowing(user.uid);
     await SmartMatchingManager.toggleFollow(user.uid, !currentlyFollowing);
@@ -546,18 +536,15 @@ class _MatchesScreenState extends State<MatchesScreen> {
         _followingMap[user.uid] = !currentlyFollowing;
       });
       _showSnack(currentlyFollowing
-          ? 'Unfollowed ${user.name}'
-          : 'Following ${user.name} ✅');
+          ? '${context.tr('unfollowed')} ${user.name}'
+          : '${user.name} ${context.tr('following_confirmed')}');
     }
   }
 
-  // FIX: Search filter properly apply hota hai
   List<MatchUser> _applyFilters(List<MatchUser> matches) {
     return matches.where((u) {
-      // Skipped users hide karo
       if (_skippedUids.contains(u.uid)) return false;
 
-      // Search query filter
       if (_searchQuery.isNotEmpty) {
         final q = _searchQuery.toLowerCase();
         final nameMatch = u.name.toLowerCase().contains(q);
@@ -565,7 +552,6 @@ class _MatchesScreenState extends State<MatchesScreen> {
         if (!nameMatch && !cityMatch) return false;
       }
 
-      // Quick filter: all | now | recent
       if (_quickFilter == 'now' && u.activeStatus != 'now') return false;
       if (_quickFilter == 'recent' &&
           u.activeStatus != 'now' &&
@@ -638,11 +624,11 @@ class _MatchesScreenState extends State<MatchesScreen> {
   Widget build(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
 
+
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Column(
         children: [
-          // Status bar color
           Container(
               color: kPurple, height: MediaQuery.of(context).padding.top),
 
@@ -656,22 +642,23 @@ class _MatchesScreenState extends State<MatchesScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Matches',
-                          style: TextStyle(
-                              fontSize: 28,
-                              fontWeight: FontWeight.bold,
-                              color: isDark
-                                  ? Colors.white
-                                  : Colors.black)),
+                      Text(
+                        context.tr('matches_title'),
+                        style: TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.bold,
+                            color: isDark ? Colors.white : Colors.black),
+                      ),
                       const SizedBox(height: 4),
                       Text(
-                          'People who liked you & your matches.',
-                          style: TextStyle(
-                              fontSize: 13,
-                              color: isDark
-                                  ? Colors.white70
-                                  : Colors.black54,
-                              height: 1.4)),
+                        context.tr('matches_subtitle'),
+                        style: TextStyle(
+                            fontSize: 13,
+                            color: isDark
+                                ? Colors.white70
+                                : Colors.black54,
+                            height: 1.4),
+                      ),
                     ],
                   ),
                 ),
@@ -767,7 +754,7 @@ class _MatchesScreenState extends State<MatchesScreen> {
             ),
           ),
 
-          // ── FIX: Search Bar — ab actual kaam karta hai ──
+          // ── Search Bar ──
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
             child: TextField(
@@ -778,7 +765,7 @@ class _MatchesScreenState extends State<MatchesScreen> {
                   color: isDark ? Colors.white : Colors.black,
                   fontSize: 14),
               decoration: InputDecoration(
-                hintText: 'Search by name or city...',
+                hintText: context.tr('search_hint'),
                 hintStyle: TextStyle(
                     color: isDark ? Colors.white38 : Colors.black38,
                     fontSize: 14),
@@ -814,7 +801,7 @@ class _MatchesScreenState extends State<MatchesScreen> {
             ),
           ),
 
-          // ── FIX: Quick Filter Chips — ab actual filter karte hain ──
+          // ── Quick Filter Chips ──
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: SingleChildScrollView(
@@ -822,21 +809,19 @@ class _MatchesScreenState extends State<MatchesScreen> {
               child: Row(
                 children: [
                   _FilterChip(
-                    label: '🌐 All',
+                    label: context.tr('filter_all'),
                     isSelected: _quickFilter == 'all',
-                    onTap: () =>
-                        setState(() => _quickFilter = 'all'),
+                    onTap: () => setState(() => _quickFilter = 'all'),
                   ),
                   const SizedBox(width: 8),
                   _FilterChip(
-                    label: '🟢 Online Now',
+                    label: context.tr('filter_online_now'),
                     isSelected: _quickFilter == 'now',
-                    onTap: () =>
-                        setState(() => _quickFilter = 'now'),
+                    onTap: () => setState(() => _quickFilter = 'now'),
                   ),
                   const SizedBox(width: 8),
                   _FilterChip(
-                    label: '🕐 Recently Active',
+                    label: context.tr('filter_recently_active'),
                     isSelected: _quickFilter == 'recent',
                     onTap: () =>
                         setState(() => _quickFilter = 'recent'),
@@ -846,7 +831,7 @@ class _MatchesScreenState extends State<MatchesScreen> {
             ),
           ),
 
-          // ── Grace period banner ──
+          // ── Grace Period Banner ──
           if (!_graceCompleted)
             Container(
               margin:
@@ -866,9 +851,11 @@ class _MatchesScreenState extends State<MatchesScreen> {
                         strokeWidth: 2, color: kPurple),
                   ),
                   const SizedBox(width: 8),
-                  const Text('Detecting your presence...',
-                      style:
-                      TextStyle(fontSize: 12, color: kPurple)),
+                  Text(
+                    context.tr('detecting_presence'),
+                    style: const TextStyle(
+                        fontSize: 12, color: kPurple),
+                  ),
                 ],
               ),
             ),
@@ -881,15 +868,13 @@ class _MatchesScreenState extends State<MatchesScreen> {
               child: StreamBuilder<List<MatchUser>>(
                 stream: SmartMatchingManager.matchesStream(),
                 builder: (context, snap) {
-                  if (snap.connectionState ==
-                      ConnectionState.waiting) {
+                  if (snap.connectionState == ConnectionState.waiting) {
                     return const Center(
                         child: CircularProgressIndicator(
                             color: kPurple));
                   }
 
                   final rawMatches = snap.data ?? [];
-                  // FIX: Filters apply karo
                   final matches = _applyFilters(rawMatches);
 
                   if (matches.isEmpty) {
@@ -903,8 +888,8 @@ class _MatchesScreenState extends State<MatchesScreen> {
                           const SizedBox(height: 12),
                           Text(
                             _searchQuery.isNotEmpty
-                                ? 'No results for "$_searchQuery"'
-                                : 'Looking for matches...',
+                                ? '${context.tr('no_results_for')} "$_searchQuery"'
+                                : context.tr('looking_for_matches'),
                             style: const TextStyle(
                                 fontSize: 16, color: Colors.grey),
                           ),
@@ -915,8 +900,7 @@ class _MatchesScreenState extends State<MatchesScreen> {
 
                   return GridView.builder(
                     padding: const EdgeInsets.all(8),
-                    physics:
-                    const AlwaysScrollableScrollPhysics(),
+                    physics: const AlwaysScrollableScrollPhysics(),
                     gridDelegate:
                     const SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: 2,
@@ -926,7 +910,6 @@ class _MatchesScreenState extends State<MatchesScreen> {
                     itemCount: matches.length,
                     itemBuilder: (context, index) {
                       final user = matches[index];
-                      // Local follow state se override
                       final isFollowing =
                           _followingMap[user.uid] ?? user.isFollowing;
                       final displayUser =
@@ -934,7 +917,6 @@ class _MatchesScreenState extends State<MatchesScreen> {
 
                       return _MatchCard(
                         user: displayUser,
-                        // FIX: Skip ab actually kaam karta hai
                         onRemove: () => _onSkip(user),
                         onHeartTap: () => _onHeartTap(user),
                         onProfileTap: () => Navigator.push(
@@ -943,7 +925,6 @@ class _MatchesScreenState extends State<MatchesScreen> {
                               builder: (_) =>
                                   ProfileScreen(user: user)),
                         ),
-                        // FIX: Follow properly toggle hota hai
                         onFollow: () => _onFollowToggle(user),
                       );
                     },
@@ -959,7 +940,7 @@ class _MatchesScreenState extends State<MatchesScreen> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  FILTER CHIP WIDGET  (NEW)
+//  FILTER CHIP WIDGET
 // ─────────────────────────────────────────────────────────────────────────────
 class _FilterChip extends StatelessWidget {
   final String label;
@@ -1012,25 +993,27 @@ class _PrivacySheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+
+
     final options = [
       {
         'level': 'open',
-        'label': 'Open',
-        'desc': 'Anyone can connect with you directly, no approval needed',
+        'label': context.tr('privacy_open_label'),
+        'desc': context.tr('privacy_open_desc'),
         'color': Colors.green,
         'icon': Icons.lock_open_rounded,
       },
       {
         'level': 'semi',
-        'label': 'Semi',
-        'desc': 'People send requests first, you choose who to accept',
+        'label': context.tr('privacy_semi_label'),
+        'desc': context.tr('privacy_semi_desc'),
         'color': Colors.amber,
         'icon': Icons.lock_clock_outlined,
       },
       {
         'level': 'private',
-        'label': 'Private',
-        'desc': 'You reach out to others, no one can contact you',
+        'label': context.tr('privacy_private_label'),
+        'desc': context.tr('privacy_private_desc'),
         'color': Colors.red,
         'icon': Icons.lock_rounded,
       },
@@ -1046,11 +1029,13 @@ class _PrivacySheet extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Privacy Level',
-              style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black)),
+          Text(
+            context.tr('privacy_title'),
+            style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.black),
+          ),
           const SizedBox(height: 16),
           ...options.map((o) {
             final isSelected = current == o['level'];
@@ -1089,24 +1074,27 @@ class _PrivacySheet extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(o['label'] as String,
-                              style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: isSelected
-                                      ? color
-                                      : Colors.black)),
+                          Text(
+                            o['label'] as String,
+                            style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: isSelected
+                                    ? color
+                                    : Colors.black),
+                          ),
                           const SizedBox(height: 3),
-                          Text(o['desc'] as String,
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey[600])),
+                          Text(
+                            o['desc'] as String,
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[600]),
+                          ),
                         ],
                       ),
                     ),
                     if (isSelected)
-                      Icon(Icons.check_circle,
-                          color: color, size: 22),
+                      Icon(Icons.check_circle, color: color, size: 22),
                   ],
                 ),
               ),
@@ -1148,19 +1136,17 @@ class _MatchCard extends StatelessWidget {
     }
   }
 
-  String get _statusLabel {
+  String _statusLabel(BuildContext context) {
     switch (user.activeStatus) {
-      case 'now':
-        return 'Online';
-      case 'recent':
-        return '2 min ago';
-      default:
-        return 'Away';
+      case 'now': return context.tr('status_online');
+      case 'recent': return context.tr('status_2min');
+      default: return context.tr('status_away');
     }
   }
 
   @override
   Widget build(BuildContext context) {
+
     return GestureDetector(
       onTap: onProfileTap,
       child: ClipRRect(
@@ -1224,17 +1210,19 @@ class _MatchCard extends StatelessWidget {
                     const Icon(Icons.circle,
                         size: 6, color: Colors.white),
                     const SizedBox(width: 3),
-                    Text(_statusLabel,
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w600)),
+                    Text(
+                        _statusLabel(context),
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w600),
+                    ),
                   ],
                 ),
               ),
             ),
 
-            // Name & age
+            // Name & age & city
             Positioned(
               left: 10,
               bottom: 48,
@@ -1251,7 +1239,6 @@ class _MatchCard extends StatelessWidget {
                                 blurRadius: 4,
                                 color: Colors.black45)
                           ])),
-                  // FIX: city ab show hoti hai agar available ho
                   if (user.city.isNotEmpty)
                     Text(
                       '📍 ${user.city}',
@@ -1289,7 +1276,7 @@ class _MatchCard extends StatelessWidget {
                         color: Colors.redAccent, size: 20)),
               ),
 
-            // Action buttons row
+            // Action buttons
             Positioned(
               left: 0,
               right: 0,
@@ -1300,7 +1287,6 @@ class _MatchCard extends StatelessWidget {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    // FIX: Skip kaam karta hai ab
                     GestureDetector(
                       onTap: onRemove,
                       child: Container(
@@ -1316,7 +1302,6 @@ class _MatchCard extends StatelessWidget {
                         width: 1,
                         height: 24,
                         color: Colors.white24),
-                    // Heart / connect
                     GestureDetector(
                       onTap: onHeartTap,
                       child: Container(
@@ -1336,7 +1321,6 @@ class _MatchCard extends StatelessWidget {
                         width: 1,
                         height: 24,
                         color: Colors.white24),
-                    // FIX: Follow toggle properly reflected
                     GestureDetector(
                       onTap: onFollow,
                       child: Container(
@@ -1347,12 +1331,8 @@ class _MatchCard extends StatelessWidget {
                                   ? kPurple.withOpacity(0.6)
                                   : Colors.white.withOpacity(0.15),
                               shape: BoxShape.circle),
-                          child: Icon(
-                              user.isFollowing
-                                  ? Icons.person_add
-                                  : Icons.person_add,
-                              color: Colors.white,
-                              size: 18)),
+                          child: const Icon(Icons.person_add,
+                              color: Colors.white, size: 18)),
                     ),
                   ],
                 ),
@@ -1366,7 +1346,7 @@ class _MatchCard extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  PROFILE SCREEN  — FIX: bio/city real data se aata hai ab
+//  PROFILE SCREEN
 // ─────────────────────────────────────────────────────────────────────────────
 class ProfileScreen extends StatefulWidget {
   final MatchUser user;
@@ -1407,14 +1387,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  // Report sheet
   void _showReportSheet() {
     final reasons = [
-      'Fake profile',
-      'Inappropriate content',
-      'Harassment',
-      'Spam',
-      'Other',
+      context.tr('report_fake'),
+      context.tr('report_inappropriate'),
+      context.tr('report_harassment'),
+      context.tr('report_spam'),
+      context.tr('report_other'),
     ];
     showModalBottomSheet(
       context: context,
@@ -1430,11 +1409,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Report User',
-                style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black)),
+            Text(
+              context.tr('report_title'),
+              style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black),
+            ),
             const SizedBox(height: 16),
             ...reasons.map((r) => ListTile(
               title: Text(r),
@@ -1443,8 +1424,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     widget.user.uid, r);
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Report submitted. Thank you.'),
+                  SnackBar(
+                    content:
+                    Text(context.tr('report_submitted')),
                     backgroundColor: Colors.red,
                   ),
                 );
@@ -1456,18 +1438,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // Block confirm dialog
   void _showBlockDialog() {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Block User'),
+        title: Text(context.tr('block_title')),
         content: Text(
-            'Are you sure you want to block ${widget.user.name}? They won\'t be able to contact you.'),
+            '${context.tr('block_confirm')} ${widget.user.name}? ${context.tr('block_desc')}'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel')),
+              child: Text(context.tr('cancel'))),
           TextButton(
             onPressed: () async {
               await SmartMatchingManager.blockUser(widget.user.uid);
@@ -1476,13 +1457,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
               Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text('${widget.user.name} blocked.'),
+                  content: Text(
+                      '${widget.user.name} ${context.tr('blocked')}'),
                   backgroundColor: Colors.red,
                 ),
               );
             },
-            child: const Text('Block',
-                style: TextStyle(color: Colors.red)),
+            child: Text(
+              context.tr('block'),
+              style: const TextStyle(color: Colors.red),
+            ),
           ),
         ],
       ),
@@ -1512,7 +1496,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     fontWeight: FontWeight.bold,
                     fontSize: 18)),
             centerTitle: true,
-            // FIX: More menu ab kaam karta hai (report/block)
             actions: [
               PopupMenuButton<String>(
                 icon: const Icon(Icons.more_vert, color: Colors.black),
@@ -1521,12 +1504,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   if (val == 'block') _showBlockDialog();
                 },
                 itemBuilder: (_) => [
-                  const PopupMenuItem(
-                      value: 'report', child: Text('Report')),
-                  const PopupMenuItem(
+                  PopupMenuItem(
+                      value: 'report',
+                      child: Text(context.tr('report'))),
+                  PopupMenuItem(
                       value: 'block',
-                      child: Text('Block',
-                          style: TextStyle(color: Colors.red))),
+                      child: Text(
+                        context.tr('block'),
+                        style: const TextStyle(color: Colors.red),
+                      )),
                 ],
               ),
             ],
@@ -1564,8 +1550,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             width: 98,
                             height: 98,
                             color: Colors.grey[300],
-                            child: const Icon(Icons.person,
-                                size: 50))),
+                            child:
+                            const Icon(Icons.person, size: 50))),
                     Positioned(
                         bottom: 4,
                         right: 4,
@@ -1590,7 +1576,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         fontWeight: FontWeight.bold,
                         color: Colors.black)),
                 const SizedBox(height: 4),
-                // FIX: city real data se
                 if (user.city.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 4),
@@ -1605,13 +1590,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     style: const TextStyle(
                         fontSize: 14, color: primaryPurple)),
                 const SizedBox(height: 12),
-                // FIX: Bio real data se — hardcoded nahi
+                // Bio
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 32),
                   child: Text(
                       user.bio.isNotEmpty
                           ? user.bio
-                          : 'No bio yet.',
+                          : context.tr('no_bio'),
                       textAlign: TextAlign.center,
                       style: TextStyle(
                           fontSize: 14,
@@ -1650,8 +1635,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                     color: Colors.white))
                                 : Text(
                                 _isFollowing
-                                    ? 'Following ✓'
-                                    : 'Follow',
+                                    ?context.tr('following_check')
+                                    : context.tr('follow'),
                                 style: const TextStyle(
                                     fontSize: 16,
                                     fontWeight:
@@ -1668,8 +1653,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   builder: (_) => ChatScreen(
                                     username: user.name,
                                     avatarUrl: user.imageUrl,
-                                    lastMessage: 'Start a conversation...',
-                                    receiverUid: user.uid, // ✅
+                                    lastMessage:
+                                    context.tr('start_conversation'),
+                                    receiverUid: user.uid,
                                   ),
                                 ),
                               );
@@ -1683,11 +1669,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 shape: RoundedRectangleBorder(
                                     borderRadius:
                                     BorderRadius.circular(30))),
-                            child: const Text('Message',
-                                style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight:
-                                    FontWeight.w600))),
+                            child: Text(
+                              context.tr('message'),
+                              style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600),
+                            )),
                       ),
                     ],
                   ),
@@ -1711,7 +1698,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                           ),
                           icon: const Icon(Icons.video_call),
-                          label: const Text('Video'),
+                          label: Text(context.tr('video')),
                           style: ElevatedButton.styleFrom(
                               backgroundColor: primaryPurple,
                               foregroundColor: Colors.white,
@@ -1736,7 +1723,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                           ),
                           icon: const Icon(Icons.call),
-                          label: const Text('Voice'),
+                          label: Text(context.tr('voice')),
                           style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.green,
                               foregroundColor: Colors.white,

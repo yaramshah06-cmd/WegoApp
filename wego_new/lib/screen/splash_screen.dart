@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:wego_marriage/screen/welcome_screen.dart';
 import 'package:wego_marriage/screen/home_feed_screen.dart';
+import 'package:wego_marriage/screen/xp_service.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -70,6 +71,8 @@ class _SplashScreenState extends State<SplashScreen>
 
         if (docSnap.exists) {
           // ✅ Proper account bana hua hai — Home bhejo
+          // 🎁 Daily Login XP (sirf ek baar per din service handle karti hai)
+          await XPService.addXP(user.uid, XPAction.dailyLogin);
           nextScreen = const HomeFeedScreen();
         } else {
           // Firebase Auth mein hai lekin Firestore mein nahi

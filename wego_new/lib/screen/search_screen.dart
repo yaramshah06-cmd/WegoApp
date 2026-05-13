@@ -3,14 +3,17 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'app_localizations.dart';
 import 'app_translations.dart';
-// ─── IMPORT YOUR USER PROFILE SCREEN ───────────────────────
-// Apni actual path yahan set karo
 import 'user_profile_screen.dart';
 
 // ─────────────────────────────────────────────────────────────
-// SEARCH SCREEN — Instagram Style  (FULLY FIXED VERSION)
-// History Firebase mein permanent save hoti hai
-// Sirf user ke "Clear all" ya "X" press pe delete hoti hai
+// SEARCH SCREEN — FULLY FIXED VERSION
+//
+// FIXES:
+//   1. Username search fix — 'username_lower' field pe range query
+//      + fallback: saare users fetch karke client-side filter
+//   2. Partial/middle name search — "ali" likhne pe "Muhammad Ali"
+//      bhi aayega — client-side contains() filter se
+//   3. Name search 'name', 'displayName', 'fullName' teeno fields check
 // ─────────────────────────────────────────────────────────────
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -89,6 +92,85 @@ class _SearchScreenState extends State<SearchScreen>
   }
 
   // ══════════════════════════════════════════════════════════
+  // ✅ FIX: USER SEARCH — partial match, username + all name fields
+  // Firestore range query sirf prefix match karti hai.
+  // Solution: saare users fetch karo (limit 300) aur
+  // client-side pe contains() filter lagao — yeh "ali" likhne pe
+  // "Muhammad Ali" aur "Alibek" dono dega.
+  // ══════════════════════════════════════════════════════════
+  Future<List<Map<String, dynamic>>> _searchUsers(String query) async {
+    final lower = query.toLowerCase().trim();
+    if (lower.isEmpty) return [];
+
+    // Helper: kisi bhi relevant field mein query ho toh true
+    bool userMatches(Map<String, dynamic> data) {
+      final username =
+      (data['username'] as String? ?? '').toLowerCase();
+      final usernameLower =
+      (data['username_lower'] as String? ?? '').toLowerCase();
+      final name =
+      (data['name'] as String? ?? '').toLowerCase();
+      final displayName =
+      (data['displayName'] as String? ?? '').toLowerCase();
+      final fullName =
+      (data['fullName'] as String? ?? '').toLowerCase();
+
+      // Kisi bhi field mein query contain ho — partial match
+      return username.contains(lower) ||
+          usernameLower.contains(lower) ||
+          name.contains(lower) ||
+          displayName.contains(lower) ||
+          fullName.contains(lower);
+    }
+
+    final allUserDocs = <String, Map<String, dynamic>>{};
+
+    // ── Pass 1: username_lower prefix query (fast, indexed) ──
+    try {
+      final end = lower.substring(0, lower.length - 1) +
+          String.fromCharCode(lower.codeUnitAt(lower.length - 1) + 1);
+
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .where('username_lower', isGreaterThanOrEqualTo: lower)
+          .where('username_lower', isLessThan: end)
+          .limit(30)
+          .get();
+
+      for (final d in snap.docs) {
+        allUserDocs[d.id] = {...d.data(), 'id': d.id};
+      }
+    } catch (e) {
+      debugPrint('username_lower query error (field missing?): $e');
+    }
+
+    // ── Pass 2: Fetch all users & client-side filter ──
+    // Yeh "ali" → "Muhammad Ali" problem solve karta hai
+    // aur username_lower field na hone pe bhi kaam karta hai
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .limit(300)
+          .get();
+
+      for (final d in snap.docs) {
+        if (d.id == _uid) continue; // apna aap mat dikhao
+        final data = d.data();
+        if (userMatches(data)) {
+          allUserDocs[d.id] = {...data, 'id': d.id};
+        }
+      }
+    } catch (e) {
+      debugPrint('Full user fetch error: $e');
+    }
+
+    // Current user ko results se hatao
+    allUserDocs.remove(_uid);
+
+    return allUserDocs.values.toList();
+  }
+
+  // ══════════════════════════════════════════════════════════
   // HISTORY LOAD
   // ══════════════════════════════════════════════════════════
   Future<void> _loadSearchHistory() async {
@@ -120,7 +202,7 @@ class _SearchScreenState extends State<SearchScreen>
         _isLoadingHistory = false;
       });
     } catch (e) {
-      debugPrint('⚠️ History load error: $e');
+      debugPrint('History load error: $e');
       if (mounted) setState(() => _isLoadingHistory = false);
     }
   }
@@ -135,7 +217,8 @@ class _SearchScreenState extends State<SearchScreen>
     if (username.isEmpty) return;
 
     try {
-      final existing = await ref.where('username', isEqualTo: username).get();
+      final existing =
+      await ref.where('username', isEqualTo: username).get();
       for (final doc in existing.docs) {
         await doc.reference.delete();
       }
@@ -150,8 +233,8 @@ class _SearchScreenState extends State<SearchScreen>
 
       if (!mounted) return;
       setState(() {
-        _recentSearches.removeWhere(
-                (r) => (r['username'] as String? ?? '') == username);
+        _recentSearches
+            .removeWhere((r) => (r['username'] as String? ?? '') == username);
         _recentSearches.insert(0, {
           'docId': docRef.id,
           'type': entry['type'] ?? 'query',
@@ -165,7 +248,7 @@ class _SearchScreenState extends State<SearchScreen>
         }
       });
     } catch (e) {
-      debugPrint('❌ Save error: $e');
+      debugPrint('Save error: $e');
     }
   }
 
@@ -182,7 +265,7 @@ class _SearchScreenState extends State<SearchScreen>
       try {
         await ref.doc(docId).delete();
       } catch (e) {
-        debugPrint('❌ Delete error: $e');
+        debugPrint('Delete error: $e');
       }
     }
   }
@@ -197,7 +280,8 @@ class _SearchScreenState extends State<SearchScreen>
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Clear Search History'),
-        content: const Text('Sari search history delete ho jayegi. Sure ho?'),
+        content:
+        const Text('Sari search history delete ho jayegi. Sure ho?'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -221,21 +305,20 @@ class _SearchScreenState extends State<SearchScreen>
       for (final doc in snap.docs) batch.delete(doc.reference);
       await batch.commit();
     } catch (e) {
-      debugPrint('❌ Clear all error: $e');
+      debugPrint('Clear all error: $e');
     }
   }
 
   // ══════════════════════════════════════════════════════════
-  // ✅ FIX: NAVIGATE TO USER PROFILE
+  // NAVIGATE TO USER PROFILE
   // ══════════════════════════════════════════════════════════
   void _openUserProfile(Map<String, dynamic> user) {
     final username = user['username'] as String? ?? '';
     final photoUrl = user['photoUrl'] as String? ?? '';
-    final userId = user['userId'] as String? ??
-        user['id'] as String? ??
-        '';
+    final userId =
+        user['userId'] as String? ?? user['id'] as String? ?? '';
 
-    if (username.isEmpty) return;
+    if (username.isEmpty && userId.isEmpty) return;
 
     Navigator.push(
       context,
@@ -250,7 +333,7 @@ class _SearchScreenState extends State<SearchScreen>
   }
 
   // ══════════════════════════════════════════════════════════
-  // SEARCH
+  // SEARCH TRIGGER
   // ══════════════════════════════════════════════════════════
   void _triggerSearch(String text) {
     final trimmed = text.trim();
@@ -279,6 +362,9 @@ class _SearchScreenState extends State<SearchScreen>
     _focusNode.requestFocus();
   }
 
+  // ══════════════════════════════════════════════════════════
+  // ✅ FIX: FULL SEARCH — uses new _searchUsers()
+  // ══════════════════════════════════════════════════════════
   Future<void> _performFullSearch(String query) async {
     setState(() => _isSearching = true);
     final lower = query.toLowerCase().trim();
@@ -286,61 +372,17 @@ class _SearchScreenState extends State<SearchScreen>
       setState(() => _isSearching = false);
       return;
     }
-    final end = lower.substring(0, lower.length - 1) +
-        String.fromCharCode(lower.codeUnitAt(lower.length - 1) + 1);
 
     try {
-      final uidSnap = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(lower)
-          .get();
-      final usernameSnap = await FirebaseFirestore.instance
-          .collection('users')
-          .where('username_lower', isGreaterThanOrEqualTo: lower)
-          .where('username_lower', isLessThan: end)
-          .limit(20)
-          .get();
-      final fullNameSnap = await FirebaseFirestore.instance
-          .collection('users')
-          .where('fullName', isGreaterThanOrEqualTo: query.trim())
-          .where('fullName', isLessThan: query.trim() + '\uf8ff')
-          .limit(20)
-          .get();
+      // ── Users: partial match on all name/username fields ──
+      final users = await _searchUsers(query);
 
-      final allUserDocs = <String, Map<String, dynamic>>{};
-      if (uidSnap.exists) {
-        allUserDocs[uidSnap.id] = {...uidSnap.data()!, 'id': uidSnap.id};
-      }
-      for (final d in usernameSnap.docs) {
-        allUserDocs[d.id] = {...d.data(), 'id': d.id};
-      }
-      for (final d in fullNameSnap.docs) {
-        allUserDocs[d.id] = {...d.data(), 'id': d.id};
-      }
-      final usersSnap = allUserDocs.values.toList();
-
+      // ── Posts ──
       final postsSnap = await FirebaseFirestore.instance
           .collection('post')
           .limit(50)
           .get();
-      final audioSnap = await FirebaseFirestore.instance
-          .collection('audio')
-          .limit(50)
-          .get();
-      final tagsSnap = await FirebaseFirestore.instance
-          .collection('hashtags')
-          .limit(50)
-          .get();
-      final placesSnap = await FirebaseFirestore.instance
-          .collection('places')
-          .limit(50)
-          .get();
-
-      if (!mounted) return;
-
-      final users = usersSnap.toList();
-      final posts = postsSnap.docs
-          .where((d) {
+      final posts = postsSnap.docs.where((d) {
         final caption =
         (d.data()['caption'] as String? ?? '').toLowerCase();
         final hashtags = (d.data()['hashtags'] as List? ?? [])
@@ -348,20 +390,37 @@ class _SearchScreenState extends State<SearchScreen>
             .toList();
         return caption.contains(lower) ||
             hashtags.any((h) => h.contains(lower));
-      })
-          .map((d) => {...d.data(), 'id': d.id})
-          .toList();
+      }).map((d) => {...d.data(), 'id': d.id}).toList();
+
+      // ── Audio ──
+      final audioSnap = await FirebaseFirestore.instance
+          .collection('audio')
+          .limit(50)
+          .get();
       final audioList = audioSnap.docs
           .where((d) => (d.data()['title'] as String? ?? '')
           .toLowerCase()
           .contains(lower))
           .map((d) => {...d.data(), 'id': d.id})
           .toList();
+
+      // ── Tags ──
+      final tagsSnap = await FirebaseFirestore.instance
+          .collection('hashtags')
+          .limit(50)
+          .get();
       final tagsList = tagsSnap.docs
-          .where((d) =>
-          (d.data()['tag'] as String? ?? '').toLowerCase().contains(lower))
+          .where((d) => (d.data()['tag'] as String? ?? '')
+          .toLowerCase()
+          .contains(lower))
           .map((d) => {...d.data(), 'id': d.id})
           .toList();
+
+      // ── Places ──
+      final placesSnap = await FirebaseFirestore.instance
+          .collection('places')
+          .limit(50)
+          .get();
       final placesList = placesSnap.docs
           .where((d) => (d.data()['name'] as String? ?? '')
           .toLowerCase()
@@ -369,6 +428,7 @@ class _SearchScreenState extends State<SearchScreen>
           .map((d) => {...d.data(), 'id': d.id})
           .toList();
 
+      if (!mounted) return;
       setState(() {
         _profiles = users;
         _forYouUsers = users.take(3).toList();
@@ -379,14 +439,18 @@ class _SearchScreenState extends State<SearchScreen>
         _isSearching = false;
       });
 
-      // ✅ Save with userId included
+      // Save to history
       final Map<String, dynamic> entryToSave;
       if (users.isNotEmpty) {
         final u = users.first;
         entryToSave = {
           'type': 'user',
-          'username': ((u['username'] as String? ?? query)).trim(),
-          'name': (u['name'] ?? u['displayName'] ?? u['fullName'] ?? '') as String,
+          'username':
+          (u['username'] as String? ?? query).trim(),
+          'name': (u['name'] ??
+              u['displayName'] ??
+              u['fullName'] ??
+              '') as String,
           'photoUrl': (u['photoUrl'] as String? ?? ''),
           'userId': (u['id'] as String? ?? ''),
         };
@@ -401,7 +465,7 @@ class _SearchScreenState extends State<SearchScreen>
       }
       await _saveSearchToFirebase(entryToSave);
     } catch (e) {
-      debugPrint('❌ Search error: $e');
+      debugPrint('Search error: $e');
       if (mounted) setState(() => _isSearching = false);
     }
   }
@@ -429,40 +493,37 @@ class _SearchScreenState extends State<SearchScreen>
       final users = snap.docs
           .where((d) => d.id != currentUid)
           .take(5)
-          .map((d) => {...d.data() as Map<String, dynamic>, 'id': d.id})
+          .map((d) =>
+      {...d.data() as Map<String, dynamic>, 'id': d.id})
           .toList();
       setState(() => _suggestedUsers = users);
     } catch (e) {
-      debugPrint('❌ Suggested users error: $e');
+      debugPrint('Suggested users error: $e');
     }
   }
 
-  // ── LIVE SUGGESTIONS ─────────────────────────────────────
+  // ══════════════════════════════════════════════════════════
+  // ✅ FIX: LIVE SUGGESTIONS — partial match
+  // ══════════════════════════════════════════════════════════
   Future<void> _fetchLiveSuggestions(String query) async {
     final lower = query.toLowerCase().trim();
     if (lower.isEmpty) return;
-    final end = lower.substring(0, lower.length - 1) +
-        String.fromCharCode(lower.codeUnitAt(lower.length - 1) + 1);
+
     try {
-      final snap = await FirebaseFirestore.instance
-          .collection('users')
-          .where('username_lower', isGreaterThanOrEqualTo: lower)
-          .where('username_lower', isLessThan: end)
-          .limit(7)
-          .get();
+      // Client-side partial match — same _searchUsers logic
+      final results = await _searchUsers(query);
       if (!mounted) return;
       setState(() {
-        _suggestions =
-            snap.docs.map((d) => {...d.data(), 'id': d.id}).toList();
+        _suggestions = results.take(7).toList();
       });
     } catch (e) {
-      debugPrint('❌ Suggestions error: $e');
+      debugPrint('Suggestions error: $e');
     }
   }
 
-  // ─────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════
   // BUILD
-  // ─────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -528,7 +589,8 @@ class _SearchScreenState extends State<SearchScreen>
     return Container(
       height: 38,
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF262626) : const Color(0xFFEFEFEF),
+        color:
+        isDark ? const Color(0xFF262626) : const Color(0xFFEFEFEF),
         borderRadius: BorderRadius.circular(10),
       ),
       child: TextField(
@@ -544,18 +606,21 @@ class _SearchScreenState extends State<SearchScreen>
               color: isDark ? Colors.grey[600] : Colors.grey[500],
               fontSize: 15),
           prefixIcon: Icon(Icons.search,
-              color: isDark ? Colors.grey[600] : Colors.grey[500], size: 20),
+              color: isDark ? Colors.grey[600] : Colors.grey[500],
+              size: 20),
           suffixIcon: _searchController.text.isNotEmpty
               ? GestureDetector(
             onTap: _clearSearch,
             child: Container(
               margin: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: isDark ? Colors.grey[600] : Colors.grey[400],
+                color: isDark
+                    ? Colors.grey[600]
+                    : Colors.grey[400],
                 shape: BoxShape.circle,
               ),
-              child:
-              const Icon(Icons.close, color: Colors.white, size: 14),
+              child: const Icon(Icons.close,
+                  color: Colors.white, size: 14),
             ),
           )
               : null,
@@ -566,16 +631,18 @@ class _SearchScreenState extends State<SearchScreen>
     );
   }
 
-  // ─────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════
   // EMPTY STATE
-  // ─────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════
   Widget _buildEmptyState(bool isDark) {
     if (_isLoadingHistory) {
       return const Center(
-          child: CircularProgressIndicator(color: Color(0xFF0095F6)));
+          child:
+          CircularProgressIndicator(color: Color(0xFF0095F6)));
     }
-    final visibleRecent =
-    _showAllRecent ? _recentSearches : _recentSearches.take(4).toList();
+    final visibleRecent = _showAllRecent
+        ? _recentSearches
+        : _recentSearches.take(4).toList();
 
     return RefreshIndicator(
       onRefresh: _loadSearchHistory,
@@ -629,7 +696,9 @@ class _SearchScreenState extends State<SearchScreen>
               child: Text('No recent searches',
                   style: TextStyle(
                       fontSize: 14,
-                      color: isDark ? Colors.grey[600] : Colors.grey[500])),
+                      color: isDark
+                          ? Colors.grey[600]
+                          : Colors.grey[500])),
             ),
           ],
           if (_suggestedUsers.isNotEmpty) ...[
@@ -641,7 +710,8 @@ class _SearchScreenState extends State<SearchScreen>
                       fontSize: 16,
                       color: isDark ? Colors.white : Colors.black)),
             ),
-            ..._suggestedUsers.map((u) => _buildSuggestedUserTile(u, isDark)),
+            ..._suggestedUsers
+                .map((u) => _buildSuggestedUserTile(u, isDark)),
           ],
         ],
       ),
@@ -659,12 +729,16 @@ class _SearchScreenState extends State<SearchScreen>
           ? CircleAvatar(
         radius: 22,
         backgroundColor: Colors.grey[300],
-        backgroundImage:
-        photoUrl.isNotEmpty ? NetworkImage(photoUrl) : null,
+        backgroundImage: photoUrl.isNotEmpty
+            ? NetworkImage(photoUrl)
+            : null,
         child: photoUrl.isEmpty
             ? Text(
-            username.isNotEmpty ? username[0].toUpperCase() : 'U',
-            style: const TextStyle(fontWeight: FontWeight.bold))
+            username.isNotEmpty
+                ? username[0].toUpperCase()
+                : 'U',
+            style: const TextStyle(
+                fontWeight: FontWeight.bold))
             : null,
       )
           : Container(
@@ -673,10 +747,14 @@ class _SearchScreenState extends State<SearchScreen>
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           border: Border.all(
-              color: isDark ? Colors.grey[700]! : Colors.grey[300]!),
+              color: isDark
+                  ? Colors.grey[700]!
+                  : Colors.grey[300]!),
         ),
         child: Icon(Icons.access_time,
-            color: isDark ? Colors.grey[400] : Colors.grey[600],
+            color: isDark
+                ? Colors.grey[400]
+                : Colors.grey[600],
             size: 22),
       ),
       title: Text(username,
@@ -688,7 +766,9 @@ class _SearchScreenState extends State<SearchScreen>
           ? Text(name,
           style: TextStyle(
               fontSize: 12,
-              color: isDark ? Colors.grey[500] : Colors.grey[600]))
+              color: isDark
+                  ? Colors.grey[500]
+                  : Colors.grey[600]))
           : null,
       trailing: GestureDetector(
         onTap: () => _deleteSearchEntry(r),
@@ -696,7 +776,6 @@ class _SearchScreenState extends State<SearchScreen>
             size: 18,
             color: isDark ? Colors.grey[500] : Colors.grey[500]),
       ),
-      // ✅ FIX: Recent tile tap pe profile open karo
       onTap: () {
         if (isUser) {
           _openUserProfile(r);
@@ -715,13 +794,18 @@ class _SearchScreenState extends State<SearchScreen>
     return ListTile(
       leading: CircleAvatar(
         radius: 22,
-        backgroundColor: const Color(0xFF0095F6).withOpacity(0.2),
-        backgroundImage: photoUrl.isNotEmpty ? NetworkImage(photoUrl) : null,
+        backgroundColor:
+        const Color(0xFF0095F6).withOpacity(0.2),
+        backgroundImage:
+        photoUrl.isNotEmpty ? NetworkImage(photoUrl) : null,
         child: photoUrl.isEmpty
             ? Text(
-          username.isNotEmpty ? username[0].toUpperCase() : 'U',
+          username.isNotEmpty
+              ? username[0].toUpperCase()
+              : 'U',
           style: const TextStyle(
-              color: Color(0xFF0095F6), fontWeight: FontWeight.bold),
+              color: Color(0xFF0095F6),
+              fontWeight: FontWeight.bold),
         )
             : null,
       ),
@@ -730,13 +814,14 @@ class _SearchScreenState extends State<SearchScreen>
               fontWeight: FontWeight.w600,
               fontSize: 14,
               color: isDark ? Colors.white : Colors.black)),
-      subtitle:
-      const Text('Suggested for you', style: TextStyle(fontSize: 12, color: Colors.grey)),
+      subtitle: const Text('Suggested for you',
+          style: TextStyle(fontSize: 12, color: Colors.grey)),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            padding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
             decoration: BoxDecoration(
               color: const Color(0xFF0095F6),
               borderRadius: BorderRadius.circular(8),
@@ -749,25 +834,29 @@ class _SearchScreenState extends State<SearchScreen>
           ),
           const SizedBox(width: 8),
           GestureDetector(
-            onTap: () => setState(() => _suggestedUsers.remove(u)),
+            onTap: () =>
+                setState(() => _suggestedUsers.remove(u)),
             child: Icon(Icons.close,
                 size: 18,
-                color: isDark ? Colors.grey[500] : Colors.grey[500]),
+                color: isDark
+                    ? Colors.grey[500]
+                    : Colors.grey[500]),
           ),
         ],
       ),
-      // ✅ FIX: Suggested user tile tap pe profile open karo
       onTap: () => _openUserProfile(u),
     );
   }
 
-  // ── LIVE SUGGESTIONS ─────────────────────────────────────
+  // ── LIVE SUGGESTIONS LIST ─────────────────────────────────
   Widget _buildSuggestionsList(bool isDark) {
     if (_suggestions.isEmpty) {
       return Center(
         child: Text('No results found',
             style: TextStyle(
-                color: isDark ? Colors.grey[600] : Colors.grey[400])),
+                color: isDark
+                    ? Colors.grey[600]
+                    : Colors.grey[400])),
       );
     }
     return ListView.builder(
@@ -776,7 +865,12 @@ class _SearchScreenState extends State<SearchScreen>
         final u = _suggestions[i];
         final username = u['username'] as String? ?? '';
         final photoUrl = u['photoUrl'] as String? ?? '';
-        final bio = u['bio'] as String? ?? '';
+        // ✅ Show actual name in subtitle (whichever field has it)
+        final displayName = (u['name'] as String? ??
+            u['displayName'] as String? ??
+            u['fullName'] as String? ??
+            '')
+            .trim();
 
         return ListTile(
           leading: CircleAvatar(
@@ -786,8 +880,11 @@ class _SearchScreenState extends State<SearchScreen>
             photoUrl.isNotEmpty ? NetworkImage(photoUrl) : null,
             child: photoUrl.isEmpty
                 ? Text(
-                username.isNotEmpty ? username[0].toUpperCase() : 'U',
-                style: const TextStyle(fontWeight: FontWeight.bold))
+                username.isNotEmpty
+                    ? username[0].toUpperCase()
+                    : 'U',
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold))
                 : null,
           ),
           title: Text(username,
@@ -795,20 +892,21 @@ class _SearchScreenState extends State<SearchScreen>
                   fontWeight: FontWeight.w600,
                   fontSize: 14,
                   color: isDark ? Colors.white : Colors.black)),
-          subtitle: bio.isNotEmpty
-              ? Text(bio,
+          subtitle: displayName.isNotEmpty
+              ? Text(displayName,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                   fontSize: 12,
-                  color: isDark ? Colors.grey[500] : Colors.grey[600]))
+                  color: isDark
+                      ? Colors.grey[500]
+                      : Colors.grey[600]))
               : null,
-          // ✅ FIX: Live suggestion tap pe profile open karo
           onTap: () {
             _saveSearchToFirebase({
               'type': 'user',
               'username': username,
-              'name': u['name'] ?? u['fullName'] ?? '',
+              'name': displayName,
               'photoUrl': photoUrl,
               'userId': u['id'] ?? '',
             });
@@ -830,8 +928,8 @@ class _SearchScreenState extends State<SearchScreen>
           labelColor: isDark ? Colors.white : Colors.black,
           unselectedLabelColor: Colors.grey,
           indicatorWeight: 1.5,
-          labelStyle:
-          const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+          labelStyle: const TextStyle(
+              fontWeight: FontWeight.w600, fontSize: 13),
           tabs: const [
             Tab(text: 'For you'),
             Tab(text: 'Profiles'),
@@ -891,26 +989,37 @@ class _SearchScreenState extends State<SearchScreen>
     if (_profiles.isEmpty) return _buildNoResults(isDark);
     return ListView.builder(
       itemCount: _profiles.length,
-      itemBuilder: (_, i) => _buildProfileTile(_profiles[i], isDark),
+      itemBuilder: (_, i) =>
+          _buildProfileTile(_profiles[i], isDark),
     );
   }
 
   Widget _buildProfileTile(Map<String, dynamic> u, bool isDark) {
     final username = u['username'] as String? ?? '';
     final photoUrl = u['photoUrl'] as String? ?? '';
-    final bio = u['bio'] as String? ?? '';
+    final displayName = (u['name'] as String? ??
+        u['displayName'] as String? ??
+        u['fullName'] as String? ??
+        '')
+        .trim();
 
     return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      contentPadding:
+      const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       leading: CircleAvatar(
         radius: 24,
-        backgroundColor: const Color(0xFF0095F6).withOpacity(0.15),
-        backgroundImage: photoUrl.isNotEmpty ? NetworkImage(photoUrl) : null,
+        backgroundColor:
+        const Color(0xFF0095F6).withOpacity(0.15),
+        backgroundImage:
+        photoUrl.isNotEmpty ? NetworkImage(photoUrl) : null,
         child: photoUrl.isEmpty
             ? Text(
-          username.isNotEmpty ? username[0].toUpperCase() : 'U',
+          username.isNotEmpty
+              ? username[0].toUpperCase()
+              : 'U',
           style: const TextStyle(
-              color: Color(0xFF0095F6), fontWeight: FontWeight.bold),
+              color: Color(0xFF0095F6),
+              fontWeight: FontWeight.bold),
         )
             : null,
       ),
@@ -919,16 +1028,19 @@ class _SearchScreenState extends State<SearchScreen>
               fontWeight: FontWeight.w600,
               fontSize: 14,
               color: isDark ? Colors.white : Colors.black)),
-      subtitle: bio.isNotEmpty
-          ? Text(bio,
+      subtitle: displayName.isNotEmpty
+          ? Text(displayName,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
               fontSize: 12,
-              color: isDark ? Colors.grey[500] : Colors.grey[600]))
+              color: isDark
+                  ? Colors.grey[500]
+                  : Colors.grey[600]))
           : null,
       trailing: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        padding:
+        const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
         decoration: BoxDecoration(
           color: const Color(0xFF0095F6),
           borderRadius: BorderRadius.circular(8),
@@ -939,7 +1051,6 @@ class _SearchScreenState extends State<SearchScreen>
                 fontSize: 12,
                 fontWeight: FontWeight.w600)),
       ),
-      // ✅ FIX: Profile tile tap pe profile open karo
       onTap: () => _openUserProfile(u),
     );
   }
@@ -948,7 +1059,11 @@ class _SearchScreenState extends State<SearchScreen>
     final list = _audio.isNotEmpty
         ? _audio
         : [
-      {'title': '$_query - Original Audio', 'artist': 'Unknown', 'reels': '0'},
+      {
+        'title': '$_query - Original Audio',
+        'artist': 'Unknown',
+        'reels': '0'
+      },
     ];
     return ListView.builder(
       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -967,19 +1082,25 @@ class _SearchScreenState extends State<SearchScreen>
             child: coverUrl.isNotEmpty
                 ? ClipRRect(
                 borderRadius: BorderRadius.circular(6),
-                child: Image.network(coverUrl, fit: BoxFit.cover))
+                child: Image.network(coverUrl,
+                    fit: BoxFit.cover))
                 : Icon(Icons.music_note,
-                color: isDark ? Colors.grey[400] : Colors.grey[600]),
+                color: isDark
+                    ? Colors.grey[400]
+                    : Colors.grey[600]),
           ),
           title: Text(a['title'] as String? ?? 'Original Audio',
               style: TextStyle(
                   fontWeight: FontWeight.w600,
                   fontSize: 14,
                   color: isDark ? Colors.white : Colors.black)),
-          subtitle: Text('${a['artist'] ?? ''} • ${a['reels'] ?? '0'} reels',
+          subtitle: Text(
+              '${a['artist'] ?? ''} • ${a['reels'] ?? '0'} reels',
               style: TextStyle(
                   fontSize: 12,
-                  color: isDark ? Colors.grey[500] : Colors.grey[600])),
+                  color: isDark
+                      ? Colors.grey[500]
+                      : Colors.grey[600])),
         );
       },
     );
@@ -1020,7 +1141,9 @@ class _SearchScreenState extends State<SearchScreen>
           subtitle: Text('${t['count'] ?? '0'} posts',
               style: TextStyle(
                   fontSize: 12,
-                  color: isDark ? Colors.grey[500] : Colors.grey[600])),
+                  color: isDark
+                      ? Colors.grey[500]
+                      : Colors.grey[600])),
         );
       },
     );
@@ -1047,7 +1170,9 @@ class _SearchScreenState extends State<SearchScreen>
               color: isDark ? Colors.grey[800] : Colors.grey[200],
             ),
             child: Icon(Icons.location_on,
-                color: isDark ? Colors.grey[400] : Colors.grey[600]),
+                color: isDark
+                    ? Colors.grey[400]
+                    : Colors.grey[600]),
           ),
           title: Text(p['name'] as String? ?? '',
               style: TextStyle(
@@ -1058,7 +1183,9 @@ class _SearchScreenState extends State<SearchScreen>
               ? Text(address,
               style: TextStyle(
                   fontSize: 12,
-                  color: isDark ? Colors.grey[500] : Colors.grey[600]))
+                  color: isDark
+                      ? Colors.grey[500]
+                      : Colors.grey[600]))
               : null,
         );
       },
@@ -1086,8 +1213,9 @@ class _SearchScreenState extends State<SearchScreen>
             child: imageUrl.isNotEmpty && imageUrl != 'no-image'
                 ? Image.network(imageUrl,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) =>
-                const Icon(Icons.broken_image, color: Colors.grey))
+                errorBuilder: (_, __, ___) => const Icon(
+                    Icons.broken_image,
+                    color: Colors.grey))
                 : Center(
               child: Text(
                 p['caption'] as String? ?? '',
@@ -1095,7 +1223,9 @@ class _SearchScreenState extends State<SearchScreen>
                 textAlign: TextAlign.center,
                 style: TextStyle(
                     fontSize: 10,
-                    color: isDark ? Colors.white70 : Colors.black54),
+                    color: isDark
+                        ? Colors.white70
+                        : Colors.black54),
               ),
             ),
           ),
@@ -1111,7 +1241,9 @@ class _SearchScreenState extends State<SearchScreen>
         children: [
           Icon(Icons.search_off,
               size: 60,
-              color: isDark ? Colors.white24 : Colors.grey.shade300),
+              color: isDark
+                  ? Colors.white24
+                  : Colors.grey.shade300),
           const SizedBox(height: 12),
           Text('No results for "$_query"',
               style: TextStyle(
@@ -1121,7 +1253,9 @@ class _SearchScreenState extends State<SearchScreen>
           const SizedBox(height: 4),
           Text('Try searching for something else',
               style: TextStyle(
-                  color: isDark ? Colors.grey[600] : Colors.grey[500],
+                  color: isDark
+                      ? Colors.grey[600]
+                      : Colors.grey[500],
                   fontSize: 13)),
         ],
       ),

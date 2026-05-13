@@ -11,7 +11,7 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # ✅ LANGUAGE SYSTEM — YE DONO ADD KIE
+  # ✅ LANGUAGE SYSTEM
   flutter_localizations:
     sdk: flutter
   intl: ^0.20.2
@@ -55,8 +55,13 @@ dependencies:
   video_player: ^2.9.2
   video_thumbnail: ^0.5.3
   audioplayers: ^6.1.0
+  record: 5.0.5
+  flutter_sound: ^9.2.13
   flutter_webrtc: ^0.13.0
   url_launcher: ^6.2.5
+
+  # ✅ VOICE CHANGER KE LIYE
+  ffmpeg_kit_flutter_audio: ^6.0.3
 
   # Utilities
   permission_handler: ^11.3.1
@@ -66,6 +71,9 @@ dependencies:
   http: ^1.2.2
   provider: ^6.1.2
 
+dependency_overrides:
+  record_platform_interface: 1.2.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -73,3 +81,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/badges/
+    - assets/stickers/

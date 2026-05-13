@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:wego_marriage/widgets/level_badge.dart';
 import 'app_localizations.dart';
 import 'app_translations.dart';
 import 'chat_screen.dart';
@@ -432,7 +433,18 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               ),
             ),
 
-            const SizedBox(height: 16),
+            // 🏅 Realtime Level Badge — profile pic ke neeche
+            const SizedBox(height: 10),
+            Center(
+              child: LevelBadge(
+                uid: widget.userId.isNotEmpty
+                    ? widget.userId
+                    : widget.username,
+                size: LevelBadgeSize.large,
+              ),
+            ),
+
+            const SizedBox(height: 12),
 
             // Name
             Center(

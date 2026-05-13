@@ -695,13 +695,29 @@ class _MessageTile extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        chat.name,
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: textColor,
-                        ),
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              chat.name,
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                color: textColor,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (chat.isPinned) ...[
+                            const SizedBox(width: 6),
+                            Icon(
+                              Icons.push_pin,
+                              size: 14,
+                              color: kPrimaryBlue,
+                            ),
+                          ],
+                        ],
                       ),
                       const SizedBox(height: 3),
                       Text(

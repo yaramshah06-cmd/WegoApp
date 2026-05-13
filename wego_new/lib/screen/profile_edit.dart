@@ -1,9 +1,12 @@
 import 'dart:io';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:wego_marriage/providers/user_provider.dart';
+import 'package:wego_marriage/screen/xp_service.dart';
 import 'app_localizations.dart';
 import 'app_translations.dart';
 class ProfileEditScreen extends StatefulWidget {
@@ -522,7 +525,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     );
   }
 
-  void _saveProfile() {
+  Future<void> _saveProfile() async {
     if (_formKey.currentState!.validate()) {
       final userProvider = context.read<UserProvider>();
       userProvider.updateUser(
@@ -539,6 +542,30 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         ),
       );
 
+      // 🎁 +200 XP — sirf ek baar (jab pehli baar saare fields filled hon)
+      final allFilled = _nameController.text.trim().isNotEmpty &&
+          _usernameController.text.trim().isNotEmpty &&
+          _bioController.text.trim().isNotEmpty &&
+          _emailController.text.trim().isNotEmpty &&
+          _phoneController.text.trim().isNotEmpty &&
+          _locationController.text.trim().isNotEmpty &&
+          _selectedGender.isNotEmpty &&
+          _selectedLanguage.isNotEmpty;
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (allFilled && uid != null) {
+        // Pehle Firestore se check karo — already claim ho chuki ya nahi
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .get();
+        final alreadyClaimed =
+            (userDoc.data()?['profileXPClaimed'] as bool?) ?? false;
+        if (!alreadyClaimed) {
+          await XPService.addXP(uid, XPAction.profileComplete);
+        }
+      }
+
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('Profile updated successfully!'),

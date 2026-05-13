@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//tmp/**)",
+      "Bash(python3)",
+      "Bash(python)",
+      "Bash(python extract_keys.py)",
+      "Bash(python -X utf8 show_extras.py)",
+      "Bash(python -X utf8)",
+      "Bash(python -X utf8 merge_translations.py)",
+      "Bash(python -X utf8 check_dupes.py)",
+      "Bash(python -X utf8 verify.py)",
+      "Bash(flutter analyze *)",
+      "Bash(grep -n \"await.*\\\\\\\\.update\\\\|await.*\\\\\\\\.set\\\\|firestore.*update\\\\|firestore.*set\" /d/wego_marriage/wego_new/lib/screen/profile_edit.dart)",
+      "Bash(flutter pub *)",
+      "Bash(flutter clean *)"
+    ]
+  }
+}

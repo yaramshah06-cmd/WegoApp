@@ -7,17 +7,18 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
-    <!-- Biometric — USE_FINGERPRINT deprecated hai, sirf USE_BIOMETRIC kaafi hai -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
-    <!-- Gallery / Media access (Android 13+) -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
-    <!-- Older Android fallback -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"/>
 
-    <!-- Camera feature tag -->
+    <!-- ✅ VOICE CHANGER KE LIYE NAYA ADD -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>
+
+    <!-- Features -->
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
-    <!-- Biometric feature tag -->
     <uses-feature android:name="android.hardware.fingerprint" android:required="false"/>
 
     <application
@@ -67,7 +68,6 @@
             android:name="flutterEmbedding"
             android:value="2"/>
 
-        <!-- Facebook SDK -->
         <meta-data
             android:name="com.facebook.sdk.ApplicationId"
             android:value="@string/facebook_app_id"/>
@@ -83,9 +83,7 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
-        <!-- Google Sign-In (Android 11+) -->
         <package android:name="com.google.android.gms"/>
-        <!-- Google Chrome Custom Tabs -->
         <package android:name="com.android.chrome"/>
     </queries>
 

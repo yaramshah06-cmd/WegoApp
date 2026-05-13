@@ -127,6 +127,10 @@ class _OtpScreenState extends State<OtpScreen> {
 
       if (user == null) return;
 
+      // 🔑 Firebase ne unique UID assign ki — confirm karo
+      debugPrint('✅ Firebase UID assigned (phone signup): ${user.uid}');
+      debugPrint('   📱 Phone: ${user.phoneNumber ?? widget.phoneNumber}');
+
       // ✅ Firestore mein save — provider: 'phone' bhi add kiya
       await FirebaseFirestore.instance
           .collection('users')

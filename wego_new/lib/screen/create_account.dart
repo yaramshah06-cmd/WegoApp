@@ -5,7 +5,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:local_auth/local_auth.dart';
-import 'package:geolocator/geolocator.dart'; // ✅ Real GPS location
+import 'package:geolocator/geolocator.dart';
 import 'otp_screen.dart';
 import 'package:wego_marriage/screen/user_gendar.dart';
 import 'package:wego_marriage/screen/home_feed_screen.dart';
@@ -31,7 +31,6 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
 
   final LocalAuthentication _localAuth = LocalAuthentication();
 
-  // ─── Suggested / Search State ────────────────────────────────
   List<Map<String, dynamic>> _suggestedUsers = [];
   List<Map<String, dynamic>> _liveSuggestions = [];
   List<Map<String, dynamic>> _searchResults = [];
@@ -64,24 +63,20 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
   }
 
   // ══════════════════════════════════════════════════════════════
-  // ✅ Real GPS Location fetch karna
+  // ✅ Real GPS Location
   // ══════════════════════════════════════════════════════════════
   Future<Map<String, double>> _getRealLocation() async {
-    // Default fallback — sirf tab use hoga jab permission deny ho
     const double fallbackLat = 0.0;
     const double fallbackLng = 0.0;
 
     try {
-      // 1. Location service check
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
         debugPrint('⚠️ Location services are disabled.');
         return {'latitude': fallbackLat, 'longitude': fallbackLng};
       }
 
-      // 2. Permission check
       LocationPermission permission = await Geolocator.checkPermission();
-
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) {
@@ -92,7 +87,6 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
 
       if (permission == LocationPermission.deniedForever) {
         debugPrint('⚠️ Location permission permanently denied.');
-        // User ko settings mein jaana hoga
         if (mounted) {
           _showError(
             'Location permission permanently denied. Please enable it from app settings.',
@@ -101,7 +95,6 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
         return {'latitude': fallbackLat, 'longitude': fallbackLng};
       }
 
-      // 3. Real location fetch
       final Position position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
         timeLimit: const Duration(seconds: 10),
@@ -173,6 +166,64 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
     }
   }
 
+  // ══════════════════════════════════════════════════════════════
+  // ✅ Diagnostic: Verify karo ke account banne ke baad UID
+  // Firebase Auth + Firestore dono jaghon par sahi save hui ya nahi.
+  // Returns true agar sab kuch theek hai, false agar koi mismatch hai.
+  // ══════════════════════════════════════════════════════════════
+  Future<bool> _verifyUserUidFromFirebase(String expectedUid) async {
+    try {
+      // 1. Firebase Auth se current user ki UID nikalo
+      final authUser = FirebaseAuth.instance.currentUser;
+      if (authUser == null) {
+        debugPrint('❌ UID Check: Firebase Auth mein koi user nahi mila');
+        return false;
+      }
+
+      final String authUid = authUser.uid;
+      debugPrint('🔑 Firebase Auth UID: $authUid');
+
+      // 2. Confirm karo ke expected UID match karti hai
+      if (authUid != expectedUid) {
+        debugPrint(
+            '❌ UID Mismatch: expected=$expectedUid vs auth=$authUid');
+        return false;
+      }
+
+      // 3. Firestore se same UID ka document fetch karo
+      final docSnap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(authUid)
+          .get();
+
+      if (!docSnap.exists) {
+        debugPrint('❌ Firestore mein UID $authUid ka document nahi mila');
+        return false;
+      }
+
+      // 4. Document ke andar 'uid' field bhi same honi chahiye
+      final data = docSnap.data() ?? {};
+      final String? storedUid = data['uid'] as String?;
+      debugPrint('💾 Firestore stored UID: $storedUid');
+
+      if (storedUid != null && storedUid != authUid) {
+        debugPrint(
+            '⚠️ Firestore document mein UID field mismatch: $storedUid');
+        return false;
+      }
+
+      // 5. Sab kuch theek
+      debugPrint('✅ UID verified successfully — Auth + Firestore match: $authUid');
+      debugPrint('   📧 Email: ${authUser.email ?? "(none)"}');
+      debugPrint('   📱 Phone: ${authUser.phoneNumber ?? "(none)"}');
+      debugPrint('   👤 Provider: ${data['provider'] ?? "(unknown)"}');
+      return true;
+    } catch (e) {
+      debugPrint('UID verification error: $e');
+      return false;
+    }
+  }
+
   void _showError(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -185,6 +236,45 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), backgroundColor: Colors.green),
     );
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // ✅ NEW: Level Generate karna — naye account ke saath
+  // Yeh function Firestore ke 'users' collection mein hi
+  // level field save karta hai — alag collection nahi
+  // ══════════════════════════════════════════════════════════════
+  Future<void> _generateUserLevel(String uid) async {
+    try {
+      // Check karo pehle se level hai ya nahi
+      final docSnap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .get();
+
+      // Agar level pehle se exist karta hai toh dobara mat banao
+      if (docSnap.exists) {
+        final data = docSnap.data();
+        if (data != null && data.containsKey('level')) {
+          debugPrint('ℹ️ Level already exists for uid: $uid');
+          return;
+        }
+      }
+
+      // ✅ Naye user ka level hamesha 1 se start hoga
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .update({
+        'level': 1,
+        'levelXP': 0,            // Current XP
+        'levelXPRequired': 100,  // Pehle level ke liye 100 XP chahiye
+        'levelUpdatedAt': FieldValue.serverTimestamp(),
+      });
+
+      debugPrint('✅ Level generated for uid: $uid — Level 1 assigned');
+    } catch (e) {
+      debugPrint('Level generation error: $e');
+    }
   }
 
   // ─── Save User to Firestore ──────────────────────────────────
@@ -217,11 +307,16 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
         'provider': provider,
         'createdAt': FieldValue.serverTimestamp(),
         'lastLogin': FieldValue.serverTimestamp(),
-        // ✅ Real location — har user ki apni actual GPS location
         'latitude': location['latitude'],
         'longitude': location['longitude'],
+        // ✅ NEW: Level seedha users document mein save hoga
+        'level': 1,
+        'levelXP': 0,
+        'levelXPRequired': 100,
+        'levelUpdatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
+      debugPrint('✅ User saved with Level 1: $uid');
       return true;
     } catch (e) {
       _showError('Failed to save data: ${e.toString()}');
@@ -315,7 +410,6 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
   Future<void> _signInWithGoogle() async {
     setState(() => _isLoading = true);
     try {
-      // NAYA — sahi
       final GoogleSignIn googleSignIn = GoogleSignIn(
         scopes: ['email', 'profile'],
       );
@@ -352,7 +446,6 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
       final bool alreadyExists = await _checkUserExistsInFirestore(user.uid);
 
       if (alreadyExists) {
-        // ✅ Real location se lastLogin aur location update karo
         final location = await _getRealLocation();
         await FirebaseFirestore.instance
             .collection('users')
@@ -362,6 +455,9 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
           'latitude': location['latitude'],
           'longitude': location['longitude'],
         });
+
+        // ✅ NEW: Agar purane user ka level nahi hai toh generate karo
+        await _generateUserLevel(user.uid);
 
         _showSuccess('Welcome back ${user.displayName ?? 'User'}!');
         _navigateToHome();
@@ -395,6 +491,16 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
       setState(() => _isLoading = false);
 
       if (saved) {
+        // ✅ NEW: Google se naye account pe level generate karo
+        await _generateUserLevel(user.uid);
+
+        // 🔍 Verify karo UID Firebase Auth + Firestore mein sahi hai
+        final uidOk = await _verifyUserUidFromFirebase(user.uid);
+        if (!uidOk) {
+          _showError('Account UID verification failed. Please try again.');
+          return;
+        }
+
         _showSuccess('Account created with Google!');
         _navigateToGenderScreen();
       }
@@ -459,7 +565,6 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
       final bool alreadyExists = await _checkUserExistsInFirestore(user.uid);
 
       if (alreadyExists) {
-        // ✅ Real location se update karo
         final location = await _getRealLocation();
         await FirebaseFirestore.instance
             .collection('users')
@@ -469,6 +574,9 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
           'latitude': location['latitude'],
           'longitude': location['longitude'],
         });
+
+        // ✅ NEW: Purane Facebook user ka level check aur generate karo
+        await _generateUserLevel(user.uid);
 
         _showSuccess(
             'Welcome back ${fbName.isNotEmpty ? fbName : 'User'}!');
@@ -503,6 +611,16 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
       setState(() => _isLoading = false);
 
       if (saved) {
+        // ✅ NEW: Facebook se naye account pe level generate karo
+        await _generateUserLevel(user.uid);
+
+        // 🔍 Verify karo UID Firebase Auth + Firestore mein sahi hai
+        final uidOk = await _verifyUserUidFromFirebase(user.uid);
+        if (!uidOk) {
+          _showError('Account UID verification failed. Please try again.');
+          return;
+        }
+
         _showSuccess('Account created with Facebook!');
         _navigateToGenderScreen();
       }
@@ -544,9 +662,9 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
     final String fullName = _fullNameController.text.trim();
     final int age = int.tryParse(_ageController.text.trim()) ?? 0;
 
-    // ✅ Real location fetch karo OTP se pehle
     final location = await _getRealLocation();
 
+    // ✅ NEW: userInfo mein level fields bhi bhejo OTP screen tak
     final Map<String, dynamic> userInfo = {
       'fullName': fullName,
       'username': fullName,
@@ -556,9 +674,12 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
       'age': age,
       'password': _passwordController.text.trim(),
       'bio': '',
-      // ✅ Real location — hardcoded Rawalpindi nahi
       'latitude': location['latitude'],
       'longitude': location['longitude'],
+      // ✅ NEW: OTP ke baad jab user save hoga yeh bhi save hoga
+      'level': 1,
+      'levelXP': 0,
+      'levelXPRequired': 100,
     };
 
     bool otpSent = false;
@@ -721,7 +842,8 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                   ? NetworkImage(photoUrl)
                   : null,
               child: (photoUrl == null || photoUrl.isEmpty)
-                  ? const Icon(Icons.person, size: 36, color: Color(0xFF4040FF))
+                  ? const Icon(Icons.person,
+                  size: 36, color: Color(0xFF4040FF))
                   : null,
             ),
             const SizedBox(height: 12),
@@ -742,7 +864,8 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+            child:
+            const Text('Cancel', style: TextStyle(color: Colors.grey)),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
@@ -751,8 +874,8 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12)),
             ),
-            child:
-            const Text('Confirm', style: TextStyle(color: Colors.white)),
+            child: const Text('Confirm',
+                style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -971,8 +1094,8 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
   Widget _buildLabel(String text) => Padding(
     padding: const EdgeInsets.only(bottom: 8),
     child: Text(text,
-        style:
-        const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+        style: const TextStyle(
+            fontWeight: FontWeight.bold, fontSize: 15)),
   );
 
   Widget _buildTextField({

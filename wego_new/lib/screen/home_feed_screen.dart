@@ -15,8 +15,10 @@ import 'package:wego_marriage/screen/user_profile_screen.dart';
 import 'package:wego_marriage/screen/create_content_screen.dart';
 import 'package:wego_marriage/screen/connection_secreen.dart';
 import 'package:wego_marriage/screen/search_screen.dart';
+import 'package:wego_marriage/screen/xp_service.dart';
 import 'package:wego_marriage/services/local_storage_service.dart';
 import 'package:wego_marriage/services/message_badge_service.dart';
+import 'package:wego_marriage/services/legendary_announcement_service.dart';
 import 'package:video_player/video_player.dart';
 import 'package:share_plus/share_plus.dart';
 import 'app_localizations.dart';
@@ -59,7 +61,7 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
       _lastBackPressTime = now;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(context.tr('press_back_exit')), // ✅ TRANSLATED
+          content: Text(context.tr('press_back_exit')),
           duration: const Duration(seconds: 2),
           behavior: SnackBarBehavior.floating,
         ),
@@ -129,11 +131,11 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
     final primaryColor = const Color(0xFF4A6CF7);
 
     final List<Map<String, dynamic>> items = [
-      {'icon': Icons.home_rounded,        'label': context.tr('nav_home')},      // ✅
-      {'icon': Icons.bookmark_border,     'label': context.tr('nav_favorite')},  // ✅
+      {'icon': Icons.home_rounded,        'label': context.tr('nav_home')},
+      {'icon': Icons.bookmark_border,     'label': context.tr('nav_favorite')},
       {'icon': null,                      'label': ''},
-      {'icon': Icons.chat_bubble_outline, 'label': context.tr('nav_chats')},     // ✅
-      {'icon': Icons.person_outline,      'label': context.tr('nav_profile')},   // ✅
+      {'icon': Icons.chat_bubble_outline, 'label': context.tr('nav_chats')},
+      {'icon': Icons.person_outline,      'label': context.tr('nav_profile')},
     ];
 
     return Container(
@@ -224,6 +226,101 @@ class _HomeFeedScreenState extends State<HomeFeedScreen> {
 }
 
 // ─────────────────────────────────────────────────────────────
+// LEGENDARY STRIP WIDGET
+// ─────────────────────────────────────────────────────────────
+class _LegendaryAnnouncementStrip extends StatefulWidget {
+  final String displayName;
+  const _LegendaryAnnouncementStrip({required this.displayName});
+
+  @override
+  State<_LegendaryAnnouncementStrip> createState() =>
+      _LegendaryAnnouncementStripState();
+}
+
+class _LegendaryAnnouncementStripState
+    extends State<_LegendaryAnnouncementStrip>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<Offset> _slideAnimation;
+  bool _visible = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    // Slide animation: starts off-screen right, moves to left
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 6500),
+    );
+
+    _slideAnimation = Tween<Offset>(
+      begin: const Offset(1.5, 0),
+      end: const Offset(-1.5, 0),
+    ).animate(CurvedAnimation(
+      parent: _controller,
+      // Ease in at start, linear in middle, ease out at end
+      curve: const Interval(0.0, 1.0, curve: Curves.easeInOut),
+    ));
+
+    // Small delay then play once
+    Future.delayed(const Duration(milliseconds: 800), () {
+      if (mounted) {
+        setState(() => _visible = true);
+        _controller.forward().then((_) {
+          if (mounted) setState(() => _visible = false);
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_visible) return const SizedBox.shrink();
+
+    return SlideTransition(
+      position: _slideAnimation,
+      child: Container(
+        width: double.infinity,
+        height: 26,
+        decoration: BoxDecoration(
+          // Very subtle — barely visible, non-intrusive
+          color: Colors.black.withValues(alpha: 0.35),
+          border: Border(
+            top: BorderSide(
+              color: const Color(0xFFC8A84B).withValues(alpha: 0.18),
+              width: 0.5,
+            ),
+            bottom: BorderSide(
+              color: const Color(0xFFC8A84B).withValues(alpha: 0.18),
+              width: 0.5,
+            ),
+          ),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          '👑 ${widget.displayName} is Alive',
+          style: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w400,
+            color: Color(0x8DE6C364), // soft gold, 55% opacity
+            letterSpacing: 0.3,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
 class _HomeTab extends StatefulWidget {
   const _HomeTab();
   @override
@@ -237,6 +334,10 @@ class _HomeTabState extends State<_HomeTab> {
   bool _hasMore = true;
   DocumentSnapshot? _lastDocument;
 
+  // Legendary announcement
+  String? _legendaryDisplayName;
+  bool _announcementChecked = false;
+
   final _firestore = FirebaseFirestore.instance;
   static const int _pageSize = 10;
 
@@ -245,12 +346,24 @@ class _HomeTabState extends State<_HomeTab> {
     super.initState();
     _loadMorePosts();
     _scrollController.addListener(_onScroll);
+    _checkLegendaryAnnouncement();
   }
 
   @override
   void dispose() {
     _scrollController.dispose();
     super.dispose();
+  }
+
+  // ── Check Firebase if legendary badge & cooldown passed ──
+  Future<void> _checkLegendaryAnnouncement() async {
+    final name = await LegendaryAnnouncementService.checkAndGetLegendaryUser();
+    if (mounted) {
+      setState(() {
+        _legendaryDisplayName = name;
+        _announcementChecked = true;
+      });
+    }
   }
 
   void _onScroll() {
@@ -318,7 +431,7 @@ class _HomeTabState extends State<_HomeTab> {
       setState(() => _isLoading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${context.tr('posts_load_error')}: $e')), // ✅ TRANSLATED
+          SnackBar(content: Text('${context.tr('posts_load_error')}: $e')),
         );
       }
     }
@@ -338,51 +451,68 @@ class _HomeTabState extends State<_HomeTab> {
     final theme = Theme.of(context);
 
     return SafeArea(
-      child: Column(
+      child: Stack(
         children: [
-          Container(
-            color: theme.scaffoldBackgroundColor,
-            child: Column(
-              children: [
-                _buildStoryRow(context, userStories),
-                const SizedBox(height: 10),
-                _buildSearchBar(context),
-                const SizedBox(height: 12),
-              ],
-            ),
-          ),
-          Expanded(
-            child: RefreshIndicator(
-              onRefresh: _onRefresh,
-              color: const Color(0xFF4A6CF7),
-              child: _posts.isEmpty && !_isLoading
-                  ? _buildEmptyState()
-                  : ListView.builder(
-                controller: _scrollController,
-                padding: EdgeInsets.zero,
-                itemCount: _posts.length + 1,
-                itemBuilder: (context, index) {
-                  if (index == _posts.length) {
-                    if (_isLoading) {
-                      return const Padding(
-                        padding: EdgeInsets.all(16.0),
-                        child: Center(
-                          child: CircularProgressIndicator(
-                            color: Color(0xFF4A6CF7),
-                          ),
-                        ),
+          // ── Main feed column ──
+          Column(
+            children: [
+              Container(
+                color: theme.scaffoldBackgroundColor,
+                child: Column(
+                  children: [
+                    _buildStoryRow(context, userStories),
+                    const SizedBox(height: 10),
+                    _buildSearchBar(context),
+                    const SizedBox(height: 12),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: RefreshIndicator(
+                  onRefresh: _onRefresh,
+                  color: const Color(0xFF4A6CF7),
+                  child: _posts.isEmpty && !_isLoading
+                      ? _buildEmptyState()
+                      : ListView.builder(
+                    controller: _scrollController,
+                    padding: EdgeInsets.zero,
+                    itemCount: _posts.length + 1,
+                    itemBuilder: (context, index) {
+                      if (index == _posts.length) {
+                        if (_isLoading) {
+                          return const Padding(
+                            padding: EdgeInsets.all(16.0),
+                            child: Center(
+                              child: CircularProgressIndicator(
+                                color: Color(0xFF4A6CF7),
+                              ),
+                            ),
+                          );
+                        }
+                        return const SizedBox(height: 80);
+                      }
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8.0),
+                        child: _InstagramStylePostCard(post: _posts[index]),
                       );
-                    }
-                    return const SizedBox(height: 80);
-                  }
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8.0),
-                    child: _InstagramStylePostCard(post: _posts[index]),
-                  );
-                },
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          // ── Legendary strip overlay — floats over feed ──
+          // Positioned in the middle-ish of screen, non-intrusive
+          if (_announcementChecked && _legendaryDisplayName != null)
+            Positioned(
+              top: 160, // thoda neeche — story row ke baad
+              left: 0,
+              right: 0,
+              child: _LegendaryAnnouncementStrip(
+                displayName: _legendaryDisplayName!,
               ),
             ),
-          ),
         ],
       ),
     );
@@ -396,12 +526,12 @@ class _HomeTabState extends State<_HomeTab> {
           Icon(Icons.photo_library_outlined, size: 64, color: Colors.grey[400]),
           const SizedBox(height: 12),
           Text(
-            context.tr('no_posts_found'),       // ✅ TRANSLATED
+            context.tr('no_posts_found'),
             style: TextStyle(color: Colors.grey[600], fontSize: 16),
           ),
           const SizedBox(height: 8),
           Text(
-            context.tr('create_first_post'),    // ✅ TRANSLATED
+            context.tr('create_first_post'),
             style: TextStyle(color: Colors.grey[400], fontSize: 13),
           ),
         ],
@@ -493,7 +623,7 @@ class _HomeTabState extends State<_HomeTab> {
               ),
               const SizedBox(width: 8),
               Text(
-                context.tr('search_hint'), // ✅ TRANSLATED
+                context.tr('search_hint'),
                 style: TextStyle(
                   color: isDark ? Colors.white54 : const Color(0xFFAAAAAA),
                   fontSize: 15,
@@ -642,6 +772,7 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
         'likesCount': FieldValue.increment(1),
         'likedBy': FieldValue.arrayUnion([currentUserId]),
       });
+      await XPService.addXP(currentUserId, XPAction.likeKarna);
     } else {
       await postRef.update({
         'likesCount': FieldValue.increment(-1),
@@ -695,8 +826,8 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(
           _isFollowing
-              ? '${context.tr('following')} ${widget.post.username}'   // ✅
-              : '${context.tr('unfollowed')} ${widget.post.username}', // ✅
+              ? '${context.tr('following')} ${widget.post.username}'
+              : '${context.tr('unfollowed')} ${widget.post.username}',
         ),
         duration: const Duration(seconds: 2),
       ));
@@ -759,7 +890,6 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
                       ),
 
                       if (isOwner) ...[
-                        // 1. Hide Like Count ✅ TRANSLATED
                         ListTile(
                           leading: Icon(
                             hideLikes ? Icons.favorite : Icons.favorite_border,
@@ -785,8 +915,6 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
                             },
                           ),
                         ),
-
-                        // 2. Turn Off Comments ✅ TRANSLATED
                         ListTile(
                           leading: Icon(
                             commentsDisabled
@@ -815,8 +943,6 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
                             },
                           ),
                         ),
-
-                        // 3. Hide Share Count ✅ TRANSLATED
                         ListTile(
                           leading: Icon(
                             hideShareCount
@@ -845,14 +971,12 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
                             },
                           ),
                         ),
-
                         Divider(
                             color: isDark
                                 ? Colors.grey[700]
                                 : Colors.grey[300]),
                       ],
 
-                      // ─── Options sab ke liye ✅ TRANSLATED ───
                       _buildOptionTile(Icons.save_alt, context.tr('save'), () {
                         Navigator.pop(context);
                         _toggleSave();
@@ -939,7 +1063,6 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ─── Header ───────────────────────────────────────
               Padding(
                 padding:
                 const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -992,7 +1115,7 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
                                     color: const Color(0xFF0095F6),
                                     borderRadius: BorderRadius.circular(4)),
                                 child: Text(
-                                  context.tr('follow'), // ✅ TRANSLATED
+                                  context.tr('follow'),
                                   style: const TextStyle(
                                       color: Colors.white,
                                       fontSize: 12,
@@ -1008,7 +1131,7 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
                                     size: 16, color: Colors.grey),
                                 const SizedBox(width: 4),
                                 Text(
-                                  context.tr('following'), // ✅ TRANSLATED
+                                  context.tr('following'),
                                   style: TextStyle(
                                       color: Colors.grey[600], fontSize: 12),
                                 ),
@@ -1025,7 +1148,6 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
                 ),
               ),
 
-              // ─── Post Image / Video ───────────────────────────
               GestureDetector(
                 onDoubleTap: _toggleLike,
                 child: Container(
@@ -1052,7 +1174,6 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
                 ),
               ),
 
-              // ─── Action Buttons Row ───────────────────────────
               Padding(
                 padding:
                 const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -1073,15 +1194,13 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
                       ),
                     ),
                     const SizedBox(width: 16),
-
-                    // Comment button ✅
                     GestureDetector(
                       onTap: commentsDisabled
                           ? () {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                             content: Text(
-                                context.tr('comments_turned_off_post')), // ✅
+                                context.tr('comments_turned_off_post')),
                             duration: const Duration(seconds: 2),
                           ),
                         );
@@ -1097,7 +1216,7 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
                                     _auth.currentUser?.photoURL ?? '',
                                     currentUsername:
                                     _auth.currentUser?.displayName ??
-                                        context.tr('you'))));  // ✅
+                                        context.tr('you'))));
                       },
                       child: Icon(
                         commentsDisabled
@@ -1110,8 +1229,6 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
                       ),
                     ),
                     const SizedBox(width: 16),
-
-                    // Share button ✅
                     GestureDetector(
                       onTap: () async {
                         await Share.share(
@@ -1125,7 +1242,6 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
                           color: isDark ? Colors.white : Colors.black,
                           size: 26),
                     ),
-
                     const Spacer(),
                     GestureDetector(
                       onTap: _toggleSave,
@@ -1139,7 +1255,6 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
                 ),
               ),
 
-              // ─── Like Count ✅ TRANSLATED ─────────────────────
               if (!hideLikes)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -1154,7 +1269,6 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
 
               const SizedBox(height: 6),
 
-              // ─── Caption ─────────────────────────────────────
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: RichText(
@@ -1171,12 +1285,11 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
               ),
               const SizedBox(height: 6),
 
-              // ─── Comments ✅ TRANSLATED ───────────────────────
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: commentsDisabled
                     ? Text(
-                  context.tr('comments_turned_off'), // ✅
+                  context.tr('comments_turned_off'),
                   style:
                   TextStyle(color: Colors.grey[500], fontSize: 14),
                 )
@@ -1191,9 +1304,9 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
                               _auth.currentUser?.photoURL ?? '',
                               currentUsername:
                               _auth.currentUser?.displayName ??
-                                  context.tr('you')))), // ✅
+                                  context.tr('you')))),
                   child: Text(
-                    '${context.tr('view_all_comments_count')} ${data['commentsCount'] ?? widget.post.commentsCount} ${context.tr('comments')}', // ✅
+                    '${context.tr('view_all_comments_count')} ${data['commentsCount'] ?? widget.post.commentsCount} ${context.tr('comments')}',
                     style:
                     TextStyle(color: Colors.grey[600], fontSize: 14),
                   ),
@@ -1201,18 +1314,16 @@ class _InstagramStylePostCardState extends State<_InstagramStylePostCard> {
               ),
               const SizedBox(height: 6),
 
-              // ─── Share Count ✅ TRANSLATED ────────────────────
               if (!hideShareCount && shareCount > 0)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Text(
-                    '$shareCount ${context.tr('shares')}', // ✅
+                    '$shareCount ${context.tr('shares')}',
                     style:
                     TextStyle(color: Colors.grey[600], fontSize: 13),
                   ),
                 ),
 
-              // ─── Time ────────────────────────────────────────
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Text(widget.post.time.toUpperCase(),
@@ -1269,9 +1380,6 @@ class Post {
     String timeStr = '';
     if (timestamp != null && timestamp is Timestamp) {
       final diff = DateTime.now().difference(timestamp.toDate());
-      // ⚠️ NOTE: time strings yahan context nahi hai isliye
-      // inhe screen par show karte waqt tr() se format karo
-      // ya AppTranslations.translate() directly call karo
       if (diff.inDays > 0) {
         timeStr = '${diff.inDays}d';
       } else if (diff.inHours > 0) {

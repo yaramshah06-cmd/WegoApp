@@ -12,6 +12,7 @@ import 'package:wego_marriage/providers/settings_provider.dart';
 import 'package:wego_marriage/providers/chat_provider.dart';
 import 'package:wego_marriage/screen/splash_screen.dart';
 import 'package:wego_marriage/screen/incoming_call_screen.dart';
+import 'package:wego_marriage/screen/epic_badges_screen.dart';
 import 'package:wego_marriage/services/local_storage_service.dart';
 import 'package:wego_marriage/services/message_badge_service.dart';
 import 'package:wego_marriage/screen/app_localizations.dart';

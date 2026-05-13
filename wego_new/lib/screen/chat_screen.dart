@@ -10,13 +10,19 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:http/http.dart' as http;
 import 'dart:async';
 import 'package:wego_marriage/screen/voice_call_screen.dart';
+import 'package:wego_marriage/screen/voice_match_screen.dart';
 import 'package:wego_marriage/screen/video_call_screen.dart';
 import 'package:wego_marriage/widgets/missed_call_notification.dart';
+import '../helpers/voice_message_helper.dart';
 import 'package:wego_marriage/widgets/call_log_message.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:wego_marriage/screen/camera_screen.dart';
+import 'package:wego_marriage/screen/romantic_stickers.dart';
 import 'package:wego_marriage/screen/gallery_multi_select_screen.dart';
+import 'package:wego_marriage/screen/xp_service.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:record/record.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'app_localizations.dart';
@@ -451,6 +457,8 @@ class _ChatScreenState extends State<ChatScreen>
   bool _showVoicePreview = false;
 
   final AudioPlayer _previewPlayer = AudioPlayer();
+  final AudioRecorder _audioRecorder = AudioRecorder();
+  bool _isUploadingVoice = false;
   bool _isPreviewPlaying = false;
   Duration _previewPosition = Duration.zero;
   Duration _previewTotal = Duration.zero;
@@ -465,6 +473,20 @@ class _ChatScreenState extends State<ChatScreen>
   ChatMessage? _pinnedMessage;
   bool _isBlocked = false;
 
+  // Track which romantic sticker messages have already played the full-screen
+  // overlay so we don't replay on every Firebase stream update.
+  final Set<String> _playedStickerMsgIds = {};
+  // Sticker message ids whose overlay is still running — used to hide the
+  // chat bubble until the full-screen animation finishes.
+  final Set<String> _animatingStickerMsgIds = {};
+  bool _stickerStreamPrimed = false;
+  OverlayEntry? _activeStickerOverlay;
+
+  // Current user's XP level — used to gate the romantic sticker pack
+  // (unlocks at level 20). null while still loading.
+  int? _currentUserLevel;
+  static const int _romanticStickersUnlockLevel = 20;
+
   bool _hasMissedCall = false;
   bool _isVideoMissedCall = false;
   bool _isInCall = false;
@@ -474,7 +496,6 @@ class _ChatScreenState extends State<ChatScreen>
   bool _iInitiatedCall = false;
 
   bool _autoTranslateEnabled = false;
-  bool _followEnabled = false;
   bool _pinOnTopEnabled = false;
   String _nickname = '';
   String _selectedBubbleStyle = 'default';
@@ -484,39 +505,13 @@ class _ChatScreenState extends State<ChatScreen>
 
   final List<Map<String, dynamic>> _stickerCategories = [
     {'name': 'Favorites', 'icon': Icons.star, 'stickers': <String>[]},
-    {
-      'name': 'Love',
-      'icon': Icons.favorite,
-      'stickers': <String>[
-        'https://cdn-icons-png.flaticon.com/512/833/833472.png',
-        'https://cdn-icons-png.flaticon.com/512/833/833473.png',
-        'https://cdn-icons-png.flaticon.com/512/833/833474.png',
-        'https://cdn-icons-png.flaticon.com/512/833/833475.png',
-        'https://cdn-icons-png.flaticon.com/512/833/833476.png',
-      ],
-    },
+    {'name': 'Love', 'icon': Icons.favorite, 'stickers': <String>[]},
     {
       'name': 'Funny',
       'icon': Icons.sentiment_very_satisfied,
-      'stickers': <String>[
-        'https://cdn-icons-png.flaticon.com/512/742/742756.png',
-        'https://cdn-icons-png.flaticon.com/512/742/742757.png',
-        'https://cdn-icons-png.flaticon.com/512/742/742758.png',
-        'https://cdn-icons-png.flaticon.com/512/742/742759.png',
-        'https://cdn-icons-png.flaticon.com/512/742/742760.png',
-      ],
+      'stickers': <String>[]
     },
-    {
-      'name': 'Cute',
-      'icon': Icons.pets,
-      'stickers': <String>[
-        'https://cdn-icons-png.flaticon.com/512/616/616408.png',
-        'https://cdn-icons-png.flaticon.com/512/616/616430.png',
-        'https://cdn-icons-png.flaticon.com/512/616/616496.png',
-        'https://cdn-icons-png.flaticon.com/512/616/616498.png',
-        'https://cdn-icons-png.flaticon.com/512/616/616490.png',
-      ],
-    },
+    {'name': 'Cute', 'icon': Icons.pets, 'stickers': <String>[]},
   ];
 
   final List<String> _gifUrls = [
@@ -599,6 +594,15 @@ class _ChatScreenState extends State<ChatScreen>
     _nickname = widget.username;
     _initializeChat();
     _initPreviewPlayerListeners();
+    _loadCurrentUserLevel();
+  }
+
+  Future<void> _loadCurrentUserLevel() async {
+    if (_currentUserId.isEmpty) return;
+    final data = await XPService.getUserLevelData(_currentUserId);
+    if (!mounted) return;
+    final lvl = (data['level'] as int?) ?? 1;
+    setState(() => _currentUserLevel = lvl);
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -654,14 +658,38 @@ class _ChatScreenState extends State<ChatScreen>
     _messagesSubscription =
         _firebaseService.getMessagesStream(_chatRoomId).listen((msgList) {
           if (!mounted) return;
+          final parsed = msgList
+              .map((m) => ChatMessage.fromMap(m, _currentUserId))
+              .toList();
           setState(() {
-            _messages = msgList
-                .map((m) => ChatMessage.fromMap(m, _currentUserId))
-                .toList();
+            _messages = parsed;
             _pinnedMessage = _messages.where((m) => m.isPinned).lastOrNull;
           });
+          _maybePlayIncomingStickerOverlay(parsed);
           _scrollToBottom(delay: 100);
         });
+  }
+
+  // When a new incoming romantic-sticker message arrives over the realtime
+  // stream, play the full-screen overlay. We skip the very first stream
+  // emission so the receiver doesn't see the overlay for old messages when
+  // opening the chat.
+  void _maybePlayIncomingStickerOverlay(List<ChatMessage> msgs) {
+    if (!_stickerStreamPrimed) {
+      for (final m in msgs) {
+        _playedStickerMsgIds.add(m.id);
+      }
+      _stickerStreamPrimed = true;
+      return;
+    }
+    for (final m in msgs) {
+      if (_playedStickerMsgIds.contains(m.id)) continue;
+      _playedStickerMsgIds.add(m.id);
+      if (m.type != MsgType.sticker) continue;
+      final idx = romanticStickerIndexFromUrl(m.imageUrl);
+      if (idx == null) continue;
+      _playRomanticStickerOverlay(idx, msgId: m.id);
+    }
   }
 
   void _listenToTyping() {
@@ -705,6 +733,8 @@ class _ChatScreenState extends State<ChatScreen>
 
   @override
   void dispose() {
+    _activeStickerOverlay?.remove();
+    _activeStickerOverlay = null;
     _messagesSubscription?.cancel();
     _typingSubscription?.cancel();
     _onlineSubscription?.cancel();
@@ -714,6 +744,7 @@ class _ChatScreenState extends State<ChatScreen>
     _previewDurationSub?.cancel();
     _previewStateSub?.cancel();
     _previewPlayer.dispose();
+    _audioRecorder.dispose();
     // Offline ho jao jab screen close ho
     _firebaseService.setOnlineStatus(_currentUserId, false);
     _firebaseService.setTypingStatus(
@@ -984,6 +1015,11 @@ class _ChatScreenState extends State<ChatScreen>
       chatRoomId: _chatRoomId,
       messageData: msgData,
     );
+
+    // 🎁 +20 XP for sending a message
+    if (_currentUserId.isNotEmpty) {
+      await XPService.addXP(_currentUserId, XPAction.messageBhejna);
+    }
 
     // Typing stop karo
     _firebaseService.setTypingStatus(
@@ -1496,10 +1532,13 @@ class _ChatScreenState extends State<ChatScreen>
 
   // ── 3-Dot Menu ───────────────────────────────────────────────
   void _show3DotMenu(BuildContext context) {
+    _pinOnTopEnabled =
+        context.read<ChatProvider>().isChatPinned(_chatRoomId);
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => Container(
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) => Container(
         decoration: BoxDecoration(
           color: Theme.of(context).brightness == Brightness.dark
               ? const Color(0xFF1C1C1E)
@@ -1526,13 +1565,18 @@ class _ChatScreenState extends State<ChatScreen>
                   _showEditNicknameDialog(context);
                 },
               ),
-              SwitchListTile(
-                secondary:
-                const Icon(Icons.person_add_outlined, color: kPurple),
-                title: const Text('Follow'),
-                value: _followEnabled,
-                activeColor: kPurple,
-                onChanged: (v) => setState(() => _followEnabled = v),
+              _SettingsTile(
+                icon: Icons.record_voice_over_outlined,
+                label: 'Voice Changer',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const VoiceMatchScreen(),
+                    ),
+                  );
+                },
               ),
               SwitchListTile(
                 secondary:
@@ -1540,7 +1584,13 @@ class _ChatScreenState extends State<ChatScreen>
                 title: const Text('Put on "Top of Talk List"'),
                 value: _pinOnTopEnabled,
                 activeColor: kPurple,
-                onChanged: (v) => setState(() => _pinOnTopEnabled = v),
+                onChanged: (v) {
+                  setSheet(() => _pinOnTopEnabled = v);
+                  setState(() => _pinOnTopEnabled = v);
+                  context
+                      .read<ChatProvider>()
+                      .setChatPinned(_chatRoomId, v);
+                },
               ),
               const Divider(),
               ListTile(
@@ -1577,6 +1627,7 @@ class _ChatScreenState extends State<ChatScreen>
             ],
           ),
         ),
+      ),
       ),
     );
   }
@@ -1735,34 +1786,93 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   // ── Voice Recording ────────────────────────────────────────
-  Future<void> _startRecording() async {
-    final dir = await getTemporaryDirectory();
-    final path =
-        '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
-    setState(() {
-      _isRecording = true;
-      _voiceLocked = false;
-      _voicePaused = false;
-      _recordingDuration = Duration.zero;
-      _recordedVoicePath = path;
-    });
-    _recordingTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (!_voicePaused && mounted) {
-        setState(() => _recordingDuration += const Duration(seconds: 1));
+  Future<bool> _ensureMicPermission() async {
+    final status = await Permission.microphone.request();
+    if (!status.isGranted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Microphone permission required to record voice')),
+        );
       }
-    });
+      return false;
+    }
+    return true;
+  }
+
+  Future<void> _startRecording() async {
+    if (_isRecording) return;
+    if (!await _ensureMicPermission()) return;
+
+    try {
+      if (!await _audioRecorder.hasPermission()) return;
+
+      final dir = await getTemporaryDirectory();
+      final path =
+          '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+
+      await _audioRecorder.start(
+        const RecordConfig(
+          encoder: AudioEncoder.aacLc,
+          bitRate: 128000,
+          sampleRate: 44100,
+          numChannels: 1,
+        ),
+        path: path,
+      );
+
+      setState(() {
+        _isRecording = true;
+        _voiceLocked = false;
+        _voicePaused = false;
+        _recordingDuration = Duration.zero;
+        _recordedVoicePath = path;
+      });
+
+      _recordingTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+        if (!_voicePaused && _isRecording && mounted) {
+          setState(() => _recordingDuration += const Duration(seconds: 1));
+        }
+      });
+    } catch (e) {
+      debugPrint('Recording start error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Recording failed: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _stopRecording({bool send = true}) async {
+    if (!_isRecording) return;
     _recordingTimer?.cancel();
+
+    String? finalPath;
+    try {
+      finalPath = await _audioRecorder.stop();
+    } catch (e) {
+      debugPrint('Recording stop error: $e');
+    }
+
     setState(() {
       _isRecording = false;
       _voiceLocked = false;
       _voicePaused = false;
+      if (finalPath != null) _recordedVoicePath = finalPath;
     });
-    if (send && _recordingDuration.inSeconds > 0) {
+
+    final exists = _recordedVoicePath != null &&
+        await File(_recordedVoicePath!).exists();
+
+    if (send && exists && _recordingDuration.inSeconds > 0) {
       setState(() => _showVoicePreview = true);
     } else {
+      if (_recordedVoicePath != null) {
+        try {
+          await File(_recordedVoicePath!).delete();
+        } catch (_) {}
+      }
       setState(() {
         _recordedVoicePath = null;
         _recordingDuration = Duration.zero;
@@ -1772,6 +1882,15 @@ class _ChatScreenState extends State<ChatScreen>
 
   Future<void> _pauseResumeRecording() async {
     if (!_isRecording) return;
+    try {
+      if (_voicePaused) {
+        await _audioRecorder.resume();
+      } else {
+        await _audioRecorder.pause();
+      }
+    } catch (e) {
+      debugPrint('Pause/resume error: $e');
+    }
     setState(() => _voicePaused = !_voicePaused);
   }
 
@@ -1796,17 +1915,89 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  void _sendVoiceMessage() {
-    if (_recordedVoicePath != null && _recordingDuration.inSeconds > 0) {
-      final dur = _recordingDuration;
-      _sendMessage(
+  Future<void> _sendVoiceMessage() async {
+    if (_recordedVoicePath == null || _recordingDuration.inSeconds <= 0) {
+      _cancelVoicePreview();
+      return;
+    }
+
+    final localPath = _recordedVoicePath!;
+    final dur = _recordingDuration;
+    final file = File(localPath);
+    if (!await file.exists()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Voice file missing — please re-record')),
+        );
+      }
+      _cancelVoicePreview();
+      return;
+    }
+
+    setState(() => _isUploadingVoice = true);
+    try {
+      await _previewPlayer.stop();
+
+      final fileSize = await file.length();
+      if (fileSize <= 0) {
+        throw Exception('Recorded file is empty');
+      }
+      debugPrint('Voice file size: $fileSize bytes, path: $localPath');
+
+      final fileName =
+          'voice_${_currentUserId}_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      final ref = FirebaseStorage.instance
+          .ref()
+          .child('chat_voice')
+          .child(_chatRoomId)
+          .child(fileName);
+
+      final uploadTask = ref.putFile(
+        file,
+        SettableMetadata(contentType: 'audio/mp4'),
+      );
+
+      final snapshot = await uploadTask.whenComplete(() {});
+      if (snapshot.state != TaskState.success) {
+        throw Exception('Upload state: ${snapshot.state}');
+      }
+      debugPrint(
+          'Upload complete: ${snapshot.bytesTransferred}/${snapshot.totalBytes}');
+
+      final downloadUrl = await snapshot.ref.getDownloadURL();
+      debugPrint('Download URL: $downloadUrl');
+
+      await _sendMessage(
         type: MsgType.voice,
         text: _formatDuration(dur),
-        imageUrl: _recordedVoicePath,
+        imageUrl: downloadUrl,
         duration: dur,
       );
+
+      try {
+        await file.delete();
+      } catch (_) {}
+    } on FirebaseException catch (e) {
+      debugPrint('Firebase Storage error [${e.code}]: ${e.message}');
+      if (mounted) {
+        final msg = e.code == 'unauthorized' ||
+                e.code == 'object-not-found'
+            ? 'Voice upload blocked — Firebase Storage rules me chat_voice/ allow karen'
+            : 'Voice upload failed: ${e.message}';
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(msg)));
+      }
+    } catch (e) {
+      debugPrint('Voice upload error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Voice upload failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isUploadingVoice = false);
+      _cancelVoicePreview();
     }
-    _cancelVoicePreview();
   }
 
   void _cancelVoicePreview() {
@@ -1835,62 +2026,55 @@ class _ChatScreenState extends State<ChatScreen>
               children: [
                 _buildPanelTab(0, Icons.emoji_emotions_outlined, "Emoji"),
                 const SizedBox(width: 40),
-                _buildPanelTab(1, Icons.gif_box_outlined, "GIF"),
-                const SizedBox(width: 40),
-                _buildPanelTab(2, Icons.sticky_note_2_outlined, "Sticker"),
+                _buildPanelTab(2, Icons.auto_awesome, "Sticker"),
               ],
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            child: Container(
-              height: 36,
-              decoration: BoxDecoration(
-                  color: Colors.grey.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(18)),
-              child: TextField(
-                controller: _searchCtrl,
-                onChanged: (value) {
-                  setState(() {
-                    _emojiSearchQuery = value;
-                    _stickerSearchQuery = value;
-                    _gifSearchQuery = value;
-                  });
-                },
-                decoration: InputDecoration(
-                  hintText: 'Search Emojis, Stickers, GIFs...',
-                  hintStyle: TextStyle(fontSize: 14, color: Colors.grey[600]),
-                  prefixIcon:
-                  const Icon(Icons.search, size: 18, color: Colors.grey),
-                  suffixIcon: _searchCtrl.text.isNotEmpty
-                      ? IconButton(
-                    icon: const Icon(Icons.clear,
+          if (_activeMainTab == 0)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              child: Container(
+                height: 36,
+                decoration: BoxDecoration(
+                    color: Colors.grey.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(18)),
+                child: TextField(
+                  controller: _searchCtrl,
+                  onChanged: (value) {
+                    setState(() {
+                      _emojiSearchQuery = value;
+                    });
+                  },
+                  decoration: InputDecoration(
+                    hintText: 'Search Emojis...',
+                    hintStyle: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                    prefixIcon: const Icon(Icons.search,
                         size: 18, color: Colors.grey),
-                    onPressed: () {
-                      _searchCtrl.clear();
-                      setState(() {
-                        _emojiSearchQuery = "";
-                        _stickerSearchQuery = "";
-                        _gifSearchQuery = "";
-                      });
-                    },
-                  )
-                      : null,
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(
-                      vertical: 8, horizontal: 16),
+                    suffixIcon: _searchCtrl.text.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear,
+                                size: 18, color: Colors.grey),
+                            onPressed: () {
+                              _searchCtrl.clear();
+                              setState(() {
+                                _emojiSearchQuery = "";
+                              });
+                            },
+                          )
+                        : null,
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(
+                        vertical: 8, horizontal: 16),
+                  ),
                 ),
               ),
             ),
-          ),
           Expanded(
             child: _activeMainTab == 0
                 ? _buildEmojiSection()
-                : (_activeMainTab == 1
-                ? _buildGifSection()
-                : _buildStickerSection()),
+                : _buildStickerSection(),
           ),
-          _buildBottomABCBar(),
+          if (_activeMainTab == 0) _buildBottomABCBar(),
         ],
       ),
     );
@@ -1960,71 +2144,113 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  Widget _buildStickerSection() {
-    List<String> stickers = List<String>.from(
-        _stickerCategories[_stickerCategoryIndex]['stickers'] as List);
-    if (_stickerSearchQuery.isNotEmpty) {
-      List<String> allStickers = [];
-      for (var category in _stickerCategories) {
-        allStickers.addAll(List<String>.from(category['stickers'] as List));
-      }
-      stickers = allStickers
-          .where((url) =>
-          url.toLowerCase().contains(_stickerSearchQuery.toLowerCase()))
-          .toList();
+  void _onRomanticStickerTap(int index) {
+    final url = '$kRomanticStickerScheme${index + 1}';
+    setState(() => _showPanel = false);
+    // Overlay will be played for both sender and receiver via the realtime
+    // stream listener (_maybePlayIncomingStickerOverlay), so the bubble stays
+    // hidden until the full-screen animation finishes on both sides.
+    _sendMessage(type: MsgType.sticker, imageUrl: url);
+  }
+
+  void _playRomanticStickerOverlay(int index, {String? msgId}) {
+    if (!mounted) return;
+    final overlay = Overlay.maybeOf(context);
+    if (overlay == null) return;
+
+    _activeStickerOverlay?.remove();
+    _activeStickerOverlay = null;
+
+    if (msgId != null) {
+      setState(() => _animatingStickerMsgIds.add(msgId));
     }
+
+    final entry = OverlayEntry(
+      builder: (ctx) => RomanticStickerOverlay(
+        child: romanticStickerRawByIndex(index),
+        onFinished: () {
+          _activeStickerOverlay?.remove();
+          _activeStickerOverlay = null;
+          if (msgId != null && mounted) {
+            setState(() => _animatingStickerMsgIds.remove(msgId));
+          }
+        },
+      ),
+    );
+    _activeStickerOverlay = entry;
+    overlay.insert(entry);
+  }
+
+  Widget _buildStickerSection() {
+    final level = _currentUserLevel;
+    final unlocked =
+        level != null && level >= _romanticStickersUnlockLevel;
+
     return Column(
       children: [
-        if (_stickerSearchQuery.isEmpty)
-          Container(
-            height: 50,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: _stickerCategories.length,
-              itemBuilder: (context, i) => Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: GestureDetector(
-                  onTap: () => setState(() => _stickerCategoryIndex = i),
-                  child: Column(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: _stickerCategoryIndex == i
-                              ? kPurple.withValues(alpha: 0.1)
-                              : Colors.transparent,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Icon(_stickerCategories[i]['icon'],
-                            color: _stickerCategoryIndex == i
-                                ? kPurple
-                                : Colors.grey,
-                            size: 24),
-                      ),
-                      if (_stickerCategoryIndex == i)
-                        Container(
-                            margin: const EdgeInsets.only(top: 4),
-                            width: 4,
-                            height: 4,
-                            decoration: const BoxDecoration(
-                                color: kPurple, shape: BoxShape.circle)),
-                    ],
+        Expanded(
+          child: Stack(
+            children: [
+              GridView.builder(
+                padding: const EdgeInsets.all(12),
+                gridDelegate:
+                    const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 3,
+                        crossAxisSpacing: 10,
+                        mainAxisSpacing: 10),
+                itemCount: kRomanticStickerWidgets.length,
+                itemBuilder: (context, i) => GestureDetector(
+                  onTap: unlocked ? () => _onRomanticStickerTap(i) : null,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: ColorFiltered(
+                      colorFilter: unlocked
+                          ? const ColorFilter.mode(
+                              Colors.transparent, BlendMode.multiply)
+                          : const ColorFilter.matrix(<double>[
+                              0.2126, 0.7152, 0.0722, 0, 0,
+                              0.2126, 0.7152, 0.0722, 0, 0,
+                              0.2126, 0.7152, 0.0722, 0, 0,
+                              0, 0, 0, 1, 0,
+                            ]),
+                      child: kRomanticStickerWidgets[i],
+                    ),
                   ),
                 ),
               ),
-            ),
-          ),
-        Expanded(
-          child: GridView.builder(
-            padding: const EdgeInsets.all(12),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3, crossAxisSpacing: 10, mainAxisSpacing: 10),
-            itemCount: stickers.length,
-            itemBuilder: (context, i) => GestureDetector(
-              onTap: () => _showStickerMenu(context, stickers[i]),
-              child: Image.network(stickers[i], fit: BoxFit.contain),
-            ),
+              if (!unlocked)
+                Positioned.fill(
+                  child: Container(
+                    color: Colors.black.withOpacity(0.35),
+                    alignment: Alignment.center,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.lock,
+                            color: Colors.white, size: 38),
+                        const SizedBox(height: 10),
+                        Text(
+                          level == null
+                              ? 'Loading…'
+                              : 'Unlocks at Level $_romanticStickersUnlockLevel',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600),
+                        ),
+                        if (level != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            'Your level: $level',
+                            style: const TextStyle(
+                                color: Colors.white70, fontSize: 12),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ],
@@ -2702,6 +2928,12 @@ class _ChatScreenState extends State<ChatScreen>
       }
     }
 
+    // Hide the chat bubble while the full-screen romantic-sticker animation
+    // is playing — the bubble pops in only after the overlay finishes.
+    if (_animatingStickerMsgIds.contains(msg.id)) {
+      return const SizedBox.shrink();
+    }
+
     return GestureDetector(
       onTap: _isMultiSelectMode ? () => _toggleSelection(msg.id) : null,
       child: AnimatedContainer(
@@ -2820,35 +3052,59 @@ class _ChatScreenState extends State<ChatScreen>
           ),
           Expanded(
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.only(left: 16, right: 6),
               decoration: BoxDecoration(
                   color: isDark ? Colors.black26 : Colors.white,
                   borderRadius: BorderRadius.circular(24)),
-              child: TextField(
-                controller: _msgCtrl,
-                style:
-                TextStyle(color: isDark ? Colors.white : Colors.black87),
-                decoration: InputDecoration(
-                  hintText: isEditing ? 'Edit message...' : 'Message...',
-                  border: InputBorder.none,
-                ),
-                onTap: () => setState(() => _showPanel = false),
-                onSubmitted: (_) => _sendMessage(),
-                // ✅ Typing status update hoga
-                onChanged: _onTextChanged,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _msgCtrl,
+                      style: TextStyle(
+                          color: isDark ? Colors.white : Colors.black87),
+                      decoration: InputDecoration(
+                        hintText:
+                            isEditing ? 'Edit message...' : 'Message...',
+                        border: InputBorder.none,
+                      ),
+                      onTap: () => setState(() => _showPanel = false),
+                      onSubmitted: (_) => _sendMessage(),
+                      // ✅ Typing status update hoga
+                      onChanged: _onTextChanged,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.camera_alt, color: Colors.grey),
+                    onPressed: _openCamera,
+                  ),
+                ],
               ),
             ),
           ),
           const SizedBox(width: 8),
-          IconButton(
-            icon: const Icon(Icons.camera_alt, color: Colors.grey),
-            onPressed: _openCamera,
-          ),
-          const SizedBox(width: 8),
           _msgCtrl.text.isEmpty && !isEditing
               ? GestureDetector(
-            onLongPressStart: (_) => _startRecording(),
-            onLongPressEnd: (_) => _stopRecording(),
+            onLongPressStart: (_) async {
+              await VoiceMessageHelper.startRecording();
+              _startRecording(); // UI update ke liye purana bhi chalne do
+            },
+            onLongPressEnd: (_) async {
+              final filePath = await VoiceMessageHelper.stopAndProcess();
+              if (filePath != null) {
+                // Voice changed file Firebase pe upload hoga
+                // Purani _stopRecording ki jagah directly send karo
+                final dur = _recordingDuration;
+                setState(() {
+                  _isRecording = false;
+                  _recordedVoicePath = filePath; // changed file use hogi
+                  _showVoicePreview = true;
+                });
+                _recordingTimer?.cancel();
+              } else {
+                _stopRecording(); // fallback
+              }
+            },
             onVerticalDragUpdate: (details) {
               if (details.delta.dy < -5 && _isRecording) {
                 setState(() => _voiceLocked = true);
@@ -3007,12 +3263,22 @@ class _ChatScreenState extends State<ChatScreen>
           ),
           const SizedBox(width: 10),
           GestureDetector(
-            onTap: _sendVoiceMessage,
+            onTap: _isUploadingVoice ? null : _sendVoiceMessage,
             child: Container(
               padding: const EdgeInsets.all(12),
               decoration:
               const BoxDecoration(color: kTeal, shape: BoxShape.circle),
-              child: const Icon(Icons.send, color: Colors.white, size: 20),
+              child: _isUploadingVoice
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor:
+                            AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                  : const Icon(Icons.send, color: Colors.white, size: 20),
             ),
           ),
         ],
@@ -3324,8 +3590,16 @@ class _MyBubble extends StatelessWidget {
                     children: [
                       Stack(
                         children: [
-                          Image.network(message.imageUrl!,
-                              width: 150, height: 150, fit: BoxFit.contain),
+                          SizedBox(
+                            width: 150,
+                            height: 150,
+                            child: romanticStickerWidgetForUrl(
+                                    message.imageUrl) ??
+                                Image.network(message.imageUrl!,
+                                    width: 150,
+                                    height: 150,
+                                    fit: BoxFit.contain),
+                          ),
                           Positioned(
                             bottom: 4,
                             right: 4,
@@ -3690,7 +3964,13 @@ class _TheirStickerMessage extends StatelessWidget {
             const SizedBox(width: 8),
             Stack(
               children: [
-                Image.network(message.imageUrl!, width: 120, height: 120),
+                SizedBox(
+                  width: 120,
+                  height: 120,
+                  child: romanticStickerWidgetForUrl(message.imageUrl) ??
+                      Image.network(message.imageUrl!,
+                          width: 120, height: 120),
+                ),
                 Positioned(
                   bottom: 4,
                   right: 4,

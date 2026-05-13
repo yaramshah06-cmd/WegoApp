@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:wego_marriage/screen/home_feed_screen.dart';
 import 'package:wego_marriage/screen/nbr_screen.dart';
 import 'package:wego_marriage/screen/create_account.dart';
+import 'package:wego_marriage/screen/xp_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -106,6 +107,45 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  // ─── User ka purana level Firestore se fetch karo ─────────────────────────
+  // Agar level/XP fields purane account mein missing hain, to safe defaults
+  // se initialize karta hai — taake purana level kabhi reset na ho.
+  Future<int> _restoreUserLevel(String uid) async {
+    try {
+      final docRef =
+          FirebaseFirestore.instance.collection('users').doc(uid);
+      final snap = await docRef.get();
+      if (!snap.exists) return 1;
+
+      final data = snap.data() ?? {};
+      final int existingLevel =
+          (data['level'] as num?)?.toInt() ?? 0;
+
+      // Agar level field set hi nahi hui kabhi, to initialize karo (1 se).
+      // Existing user ka level NEVER overwrite hota — sirf missing fields fill.
+      final Map<String, dynamic> initData = {};
+      if (data['level'] == null) initData['level'] = 1;
+      if (data['levelXP'] == null) initData['levelXP'] = 0;
+      if (data['levelXPRequired'] == null) {
+        initData['levelXPRequired'] = 10000;
+      }
+      if (data['totalXPEarned'] == null) initData['totalXPEarned'] = 0;
+      if (data['rewards'] == null) {
+        initData['rewards'] = <String, dynamic>{};
+      }
+      if (initData.isNotEmpty) {
+        await docRef.set(initData, SetOptions(merge: true));
+      }
+
+      final int restored = existingLevel > 0 ? existingLevel : 1;
+      debugPrint('🎯 User level restored: Lv $restored');
+      return restored;
+    } catch (e) {
+      debugPrint('restoreUserLevel error: $e');
+      return 1;
+    }
+  }
+
   // ─── Email/Password Login ────────────────────────────────────────────────────
   Future<void> _handleLogin() async {
     final prefs = await SharedPreferences.getInstance();
@@ -140,6 +180,12 @@ class _LoginScreenState extends State<LoginScreen> {
       );
 
       await _updateLastLogin(userCredential.user!.uid);
+
+      // 🔄 Purana level Firebase se restore karo (kabhi reset nahi hota)
+      await _restoreUserLevel(userCredential.user!.uid);
+
+      // 🎁 Daily Login XP
+      await XPService.addXP(userCredential.user!.uid, XPAction.dailyLogin);
 
       if (!mounted) return;
       Navigator.pop(context);
@@ -259,6 +305,13 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       await _updateLastLogin(user.uid);
+
+      // 🔄 Purana level Firebase se restore karo (kabhi reset nahi hota)
+      await _restoreUserLevel(user.uid);
+
+      // 🎁 Daily Login XP (Google) — service khud din mein ek baar de gi
+      await XPService.addXP(user.uid, XPAction.dailyLogin);
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Welcome ${user.displayName ?? 'User'}!'),
@@ -360,6 +413,13 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       await _updateLastLogin(user.uid);
+
+      // 🔄 Purana level Firebase se restore karo (kabhi reset nahi hota)
+      await _restoreUserLevel(user.uid);
+
+      // 🎁 Daily Login XP (Facebook) — service khud din mein ek baar de gi
+      await XPService.addXP(user.uid, XPAction.dailyLogin);
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Welcome ${user.displayName ?? 'User'}!'),
@@ -451,6 +511,13 @@ class _LoginScreenState extends State<LoginScreen> {
           }
 
           await _updateLastLogin(currentUser.uid);
+
+          // 🔄 Purana level Firebase se restore karo
+          await _restoreUserLevel(currentUser.uid);
+
+          // 🎁 Daily Login XP (Biometric)
+          await XPService.addXP(currentUser.uid, XPAction.dailyLogin);
+
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(

@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../providers/settings_provider.dart';
 import 'notification_screen.dart';
 import 'password_manager.dart';
 import 'language_screen.dart';
+import 'profile_edit.dart';
+import 'policy_privacy.dart';
+import 'help_center_screen.dart';
+import 'connection_secreen.dart';
+import 'welcome_screen.dart';
 import 'app_localizations.dart';
 import 'app_translations.dart';
 
@@ -40,8 +46,68 @@ class SettingsScreen extends StatelessWidget {
       ),
       body: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-        child: Column(
+        child: ListView(
           children: [
+            SettingsMenuItem(
+              icon: Icons.person_outline,
+              label: context.tr('edit_profile'),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const ProfileEditScreen(),
+                  ),
+                );
+              },
+            ),
+            SettingsMenuItem(
+              icon: Icons.notifications_outlined,
+              label: context.tr('notifications'),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const NotificationSettingScreen(),
+                  ),
+                );
+              },
+            ),
+            SettingsMenuItem(
+              icon: Icons.privacy_tip_outlined,
+              label: context.tr('privacy'),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const PrivacyPolicyScreen(),
+                  ),
+                );
+              },
+            ),
+            SettingsMenuItem(
+              icon: Icons.favorite_border,
+              label: context.tr('favorites'),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const MatchesScreen(),
+                  ),
+                );
+              },
+            ),
+            SettingsMenuItem(
+              icon: Icons.help_outline,
+              label: context.tr('help_support'),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const HelpCenterScreen(),
+                  ),
+                );
+              },
+            ),
             SettingsMenuItem(
               icon: Icons.lightbulb_outline,
               label: context.tr('notification_setting'), // ✅
@@ -105,8 +171,75 @@ class SettingsScreen extends StatelessWidget {
                 _showDeleteAccountDialog(context);
               },
             ),
+            SettingsMenuItem(
+              icon: Icons.logout,
+              label: context.tr('logout'),
+              isDestructive: true,
+              onTap: () {
+                _showLogoutDialog(context);
+              },
+            ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _showLogoutDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: Text(
+          context.tr('logout'),
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
+        ),
+        content: Text(
+          context.tr('logout_confirm'),
+          style: const TextStyle(color: Colors.black54, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(
+              context.tr('cancel'),
+              style: const TextStyle(color: Color(0xFF4A6CF7)),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              await FirebaseAuth.instance.signOut();
+              if (context.mounted) {
+                await context
+                    .read<SettingsProvider>()
+                    .resetLanguageToDefault();
+              }
+              if (context.mounted) {
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(builder: (_) => const WelcomeScreen()),
+                  (route) => false,
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: Text(
+              context.tr('logout'),
+              style: const TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
       ),
     );
   }
