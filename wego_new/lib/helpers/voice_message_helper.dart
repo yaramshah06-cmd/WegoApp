@@ -1,12 +1,12 @@
-import 'dart:io';
 import 'package:flutter_sound/flutter_sound.dart';
-import 'package:ffmpeg_kit_flutter_audio/ffmpeg_kit.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class VoiceMessageHelper {
   static final FlutterSoundRecorder _recorder = FlutterSoundRecorder();
+  static final FlutterSoundPlayer _player = FlutterSoundPlayer();
   static bool _isRecorderInitialized = false;
+  static bool _isPlayerInitialized = false;
   static String? _recordedFilePath;
 
   // ── Recorder Initialize ──────────────────────────────────────
@@ -14,6 +14,13 @@ class VoiceMessageHelper {
     if (!_isRecorderInitialized) {
       await _recorder.openRecorder();
       _isRecorderInitialized = true;
+    }
+  }
+
+  static Future<void> initPlayer() async {
+    if (!_isPlayerInitialized) {
+      await _player.openPlayer();
+      _isPlayerInitialized = true;
     }
   }
 
@@ -29,46 +36,55 @@ class VoiceMessageHelper {
     );
   }
 
-  // ── Recording Band karo + Pitch Change karo ──────────────────
+  // ── Recording Band karo ──────────────────────────────────────
+  // Note: FFmpeg retire ho gayi hai. Pitch shift ab playback time par
+  // _player ke speed control se simulate hoti hai (real semitone shift
+  // nahi, lekin user ko similar voice-changer effect milta hai).
   static Future<String?> stopAndProcess() async {
     await _recorder.stopRecorder();
-
-    if (_recordedFilePath == null) return null;
-
-    // SharedPreferences se pitch lo
-    final prefs = await SharedPreferences.getInstance();
-    final pitch = prefs.getInt('selected_pitch') ?? 0;
-
-    // Agar koi voice select nahi ki toh as-is return karo
-    if (pitch == 0) return _recordedFilePath;
-
-    // FFmpeg se pitch change karo
-    final dir = await getTemporaryDirectory();
-    final outputPath = '${dir.path}/voice_changed.aac';
-
-    final command =
-        '-i $_recordedFilePath -af "asetrate=44100*${_pitchMultiplier(pitch)},aresample=44100" -y $outputPath';
-
-    await FFmpegKit.execute(command);
-
-    final outputFile = File(outputPath);
-    if (await outputFile.exists()) {
-      return outputPath; // Changed voice file
-    }
-
-    return _recordedFilePath; // Fallback original
+    return _recordedFilePath;
   }
 
-  // ── Pitch Multiplier Calculate karo ─────────────────────────
-  static double _pitchMultiplier(int semitones) {
-    return semitones >= 0
-        ? 1.0 + (semitones * 0.06)
-        : 1.0 + (semitones * 0.06);
+  // ── Playback with pitch (speed-based fallback) ───────────────
+  static Future<void> playRecorded({String? path}) async {
+    final file = path ?? _recordedFilePath;
+    if (file == null) return;
+    await initPlayer();
+
+    final prefs = await SharedPreferences.getInstance();
+    final pitch = prefs.getInt('selected_pitch') ?? 0;
+    final rate = _pitchToRate(pitch);
+
+    await _player.startPlayer(fromURI: file, codec: Codec.aacADTS);
+    try {
+      await _player.setSpeed(rate);
+    } catch (_) {}
+  }
+
+  static Future<void> stopPlayback() async {
+    if (_isPlayerInitialized) {
+      await _player.stopPlayer();
+    }
+  }
+
+  // ── Pitch → Playback rate mapping ────────────────────────────
+  // semitones range ~ -8..+8 → rate 0.6..1.6
+  static double _pitchToRate(int semitones) {
+    final r = 1.0 + (semitones * 0.06);
+    if (r < 0.5) return 0.5;
+    if (r > 2.0) return 2.0;
+    return r;
   }
 
   // ── Cleanup ──────────────────────────────────────────────────
   static Future<void> dispose() async {
-    await _recorder.closeRecorder();
-    _isRecorderInitialized = false;
+    if (_isRecorderInitialized) {
+      await _recorder.closeRecorder();
+      _isRecorderInitialized = false;
+    }
+    if (_isPlayerInitialized) {
+      await _player.closePlayer();
+      _isPlayerInitialized = false;
+    }
   }
 }

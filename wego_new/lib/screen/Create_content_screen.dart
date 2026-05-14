@@ -6,7 +6,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:wego_marriage/services/cloudinary_service.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -3127,14 +3128,23 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
           .doc(currentUser.uid)
           .get();
       final userData = userDoc.data() as Map<String, dynamic>;
+      final isStory = widget.mode == ContentMode.story;
       String imageUrl = '';
       if (widget.imageBytes != null) {
-        final ref = FirebaseStorage.instance
-            .ref()
-            .child(
-            'posts/${currentUser.uid}/${DateTime.now().millisecondsSinceEpoch}.jpg');
-        await ref.putData(widget.imageBytes!);
-        imageUrl = await ref.getDownloadURL();
+        final tempDir = await getTemporaryDirectory();
+        final tempFile = File(
+            '${tempDir.path}/post_${DateTime.now().millisecondsSinceEpoch}.jpg');
+        await tempFile.writeAsBytes(widget.imageBytes!);
+        final uploadedUrl = isStory
+            ? await CloudinaryService.uploadStory(tempFile, widget.isVideo)
+            : await CloudinaryService.uploadPost(tempFile, widget.isVideo);
+        if (uploadedUrl == null) {
+          throw Exception('Cloudinary upload failed');
+        }
+        imageUrl = uploadedUrl;
+        try {
+          await tempFile.delete();
+        } catch (_) {}
       }
 
       // ✅ STICKER: Build caption with stickers
@@ -3156,6 +3166,40 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
         allowedUids.add(currentUser.uid);
       }
 
+      final visibilityStr = _visibility == PostVisibility.everyone
+          ? 'everyone'
+          : _visibility == PostVisibility.closeFriends
+              ? 'close_friends'
+              : 'only_me';
+
+      // ── STORY branch: write to `stories` collection ──
+      if (isStory) {
+        await FirebaseFirestore.instance.collection('stories').add({
+          'userId': currentUser.uid,
+          'username': userData['username'] ?? '',
+          'avatarUrl': userData['photoUrl'] ?? '',
+          'imageUrl': imageUrl,
+          'isVideo': widget.isVideo,
+          'caption': captionText,
+          'createdAt': FieldValue.serverTimestamp(),
+          'visibility': visibilityStr,
+          'allowedUids': allowedUids,
+        });
+
+        await XPService.addXP(currentUser.uid, XPAction.postBanana);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Story share ho gayi! ✅'),
+            backgroundColor: Color(0xFF0095F6),
+            duration: Duration(seconds: 2),
+          ));
+          int count = 0;
+          Navigator.of(context).popUntil((_) => count++ >= 3);
+        }
+        return;
+      }
+
       final postRef = await FirebaseFirestore.instance.collection('posts').add({
         'authorid': currentUser.uid,
         'username': userData['username'] ?? '',
@@ -3168,11 +3212,7 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
         'timestamp': FieldValue.serverTimestamp(),
         'likesCount': 0,
         'commentsCount': 0,
-        'visibility': _visibility == PostVisibility.everyone
-            ? 'everyone'
-            : _visibility == PostVisibility.closeFriends
-            ? 'close_friends'
-            : 'only_me',
+        'visibility': visibilityStr,
         // ✅ NEW: Allowed UIDs for close_friends filtering
         'allowedUids': allowedUids,
         'isVideo': widget.isVideo,

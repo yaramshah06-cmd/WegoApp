@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -330,9 +331,12 @@ class _HomeTab extends StatefulWidget {
 class _HomeTabState extends State<_HomeTab> {
   final ScrollController _scrollController = ScrollController();
   final List<Post> _posts = [];
+  final List<Post> _olderPosts = [];
   bool _isLoading = false;
   bool _hasMore = true;
   DocumentSnapshot? _lastDocument;
+  StreamSubscription<QuerySnapshot>? _liveSub;
+  String? _currentUid;
 
   // Legendary announcement
   String? _legendaryDisplayName;
@@ -344,15 +348,74 @@ class _HomeTabState extends State<_HomeTab> {
   @override
   void initState() {
     super.initState();
-    _loadMorePosts();
+    _initLiveFeed();
     _scrollController.addListener(_onScroll);
     _checkLegendaryAnnouncement();
   }
 
   @override
   void dispose() {
+    _liveSub?.cancel();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  Future<void> _initLiveFeed() async {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) return;
+    _currentUid = currentUser.uid;
+    _attachLiveListener();
+  }
+
+  void _attachLiveListener() {
+    _liveSub?.cancel();
+    _liveSub = _firestore
+        .collection('posts')
+        .orderBy('timestamp', descending: true)
+        .limit(_pageSize)
+        .snapshots()
+        .listen((snapshot) {
+      if (snapshot.docs.isNotEmpty) {
+        _lastDocument = snapshot.docs.last;
+      }
+      final filtered = _applyVisibilityFilter(snapshot.docs);
+      final livePosts = filtered.map((doc) {
+        final data = doc.data() as Map<String, dynamic>;
+        return Post.fromFirestore(doc.id, data);
+      }).toList();
+
+      if (!mounted) return;
+      setState(() {
+        _posts
+          ..clear()
+          ..addAll(livePosts)
+          ..addAll(_olderPosts);
+      });
+    }, onError: (e) {
+      debugPrint('Live feed error: $e');
+    });
+  }
+
+  List<QueryDocumentSnapshot> _applyVisibilityFilter(
+      List<QueryDocumentSnapshot> docs) {
+    final uid = _currentUid;
+    if (uid == null) return docs;
+    return docs.where((doc) {
+      final data = doc.data() as Map<String, dynamic>;
+      final visibility = (data['visibility'] as String?) ?? 'everyone';
+      final authorId = (data['authorid'] as String?) ?? '';
+      final allowedUids =
+          List<String>.from(data['allowedUids'] ?? const []);
+
+      // only_me: sirf author
+      if (visibility == 'only_me') return authorId == uid;
+      // close_friends: allowedUids me hona chahiye, ya author khud
+      if (visibility == 'close_friends') {
+        return allowedUids.contains(uid) || authorId == uid;
+      }
+      // everyone
+      return true;
+    }).toList();
   }
 
   // ── Check Firebase if legendary badge & cooldown passed ──
@@ -374,27 +437,16 @@ class _HomeTabState extends State<_HomeTab> {
   }
 
   Future<void> _loadMorePosts() async {
-    if (_isLoading || !_hasMore) return;
+    if (_isLoading || !_hasMore || _lastDocument == null) return;
     setState(() => _isLoading = true);
 
-    final currentUser = FirebaseAuth.instance.currentUser;
-    if (currentUser == null) {
-      setState(() => _isLoading = false);
-      return;
-    }
     try {
-      final currentUid = currentUser.uid;
-
-      Query query = _firestore
+      final snapshot = await _firestore
           .collection('posts')
           .orderBy('timestamp', descending: true)
-          .limit(_pageSize);
-
-      if (_lastDocument != null) {
-        query = query.startAfterDocument(_lastDocument!);
-      }
-
-      final snapshot = await query.get();
+          .startAfterDocument(_lastDocument!)
+          .limit(_pageSize)
+          .get();
 
       if (snapshot.docs.isEmpty) {
         setState(() {
@@ -406,23 +458,14 @@ class _HomeTabState extends State<_HomeTab> {
 
       _lastDocument = snapshot.docs.last;
 
-      final filteredDocs = snapshot.docs.where((doc) {
-        final data = doc.data() as Map<String, dynamic>;
-        final visibility = data['visibility'] as String? ?? 'everyone';
-        final authorId = data['authorid'] as String? ?? '';
-        final allowedUids = List<String>.from(data['allowedUids'] ?? []);
-
-        if (visibility == 'only_me') return authorId == currentUid;
-        if (visibility == 'close_friends') return allowedUids.contains(currentUid);
-        return true;
-      }).toList();
-
+      final filteredDocs = _applyVisibilityFilter(snapshot.docs);
       final newPosts = filteredDocs.map((doc) {
         final data = doc.data() as Map<String, dynamic>;
         return Post.fromFirestore(doc.id, data);
       }).toList();
 
       setState(() {
+        _olderPosts.addAll(newPosts);
         _posts.addAll(newPosts);
         _isLoading = false;
         if (snapshot.docs.length < _pageSize) _hasMore = false;
@@ -438,10 +481,13 @@ class _HomeTabState extends State<_HomeTab> {
   }
 
   Future<void> _onRefresh() async {
-    _posts.clear();
+    _olderPosts.clear();
     _lastDocument = null;
     _hasMore = true;
-    await _loadMorePosts();
+    await _initLiveFeed();
+    if (context.mounted) {
+      await context.read<StoryProvider>().refresh();
+    }
   }
 
   @override

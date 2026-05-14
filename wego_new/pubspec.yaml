@@ -1,7 +1,6 @@
 name: wego_marriage
 description: "A new Flutter project."
 publish_to: 'none'
-
 version: 1.0.0+1
 
 environment:
@@ -60,8 +59,8 @@ dependencies:
   flutter_webrtc: ^0.13.0
   url_launcher: ^6.2.5
 
-  # ✅ VOICE CHANGER KE LIYE
-  ffmpeg_kit_flutter_audio: ^6.0.3
+  # Cloudinary ✅ NEW
+  cloudinary_public: ^0.23.0
 
   # Utilities
   permission_handler: ^11.3.1

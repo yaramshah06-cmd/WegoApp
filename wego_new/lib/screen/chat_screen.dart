@@ -22,7 +22,7 @@ import 'package:wego_marriage/screen/gallery_multi_select_screen.dart';
 import 'package:wego_marriage/screen/xp_service.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:record/record.dart';
-import 'package:firebase_storage/firebase_storage.dart';
+import 'package:wego_marriage/services/cloudinary_service.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'app_localizations.dart';
@@ -1944,27 +1944,10 @@ class _ChatScreenState extends State<ChatScreen>
       }
       debugPrint('Voice file size: $fileSize bytes, path: $localPath');
 
-      final fileName =
-          'voice_${_currentUserId}_${DateTime.now().millisecondsSinceEpoch}.m4a';
-      final ref = FirebaseStorage.instance
-          .ref()
-          .child('chat_voice')
-          .child(_chatRoomId)
-          .child(fileName);
-
-      final uploadTask = ref.putFile(
-        file,
-        SettableMetadata(contentType: 'audio/mp4'),
-      );
-
-      final snapshot = await uploadTask.whenComplete(() {});
-      if (snapshot.state != TaskState.success) {
-        throw Exception('Upload state: ${snapshot.state}');
+      final downloadUrl = await CloudinaryService.uploadVoiceMessage(file);
+      if (downloadUrl == null) {
+        throw Exception('Cloudinary voice upload failed');
       }
-      debugPrint(
-          'Upload complete: ${snapshot.bytesTransferred}/${snapshot.totalBytes}');
-
-      final downloadUrl = await snapshot.ref.getDownloadURL();
       debugPrint('Download URL: $downloadUrl');
 
       await _sendMessage(
@@ -1977,16 +1960,6 @@ class _ChatScreenState extends State<ChatScreen>
       try {
         await file.delete();
       } catch (_) {}
-    } on FirebaseException catch (e) {
-      debugPrint('Firebase Storage error [${e.code}]: ${e.message}');
-      if (mounted) {
-        final msg = e.code == 'unauthorized' ||
-                e.code == 'object-not-found'
-            ? 'Voice upload blocked — Firebase Storage rules me chat_voice/ allow karen'
-            : 'Voice upload failed: ${e.message}';
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(msg)));
-      }
     } catch (e) {
       debugPrint('Voice upload error: $e');
       if (mounted) {
