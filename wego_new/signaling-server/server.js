@@ -11,6 +11,9 @@ const io = new Server(server, {
 const users = {};
 const activeCalls = {};
 
+// Random match queue
+let waitingUser = null;
+
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
@@ -18,6 +21,25 @@ io.on("connection", (socket) => {
     users[userId] = socket.id;
     socket.userId = userId;
     socket.emit("registered", { userId, socketId: socket.id });
+  });
+
+  socket.on("find_match", () => {
+    if (waitingUser && waitingUser.id !== socket.id) {
+      const partner = waitingUser;
+      waitingUser = null;
+      socket.emit("match_found", { matchedUserId: partner.userId });
+      partner.emit("match_found", { matchedUserId: socket.userId });
+    } else {
+      waitingUser = socket;
+      socket.emit("waiting_for_match");
+    }
+  });
+
+  socket.on("cancel_match", () => {
+    if (waitingUser && waitingUser.id === socket.id) {
+      waitingUser = null;
+      socket.emit("match_cancelled");
+    }
   });
 
   socket.on("call-user", ({ calleeId, callerId, callType, offer }) => {
@@ -70,6 +92,7 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", () => {
     if (socket.userId) delete users[socket.userId];
+    if (waitingUser && waitingUser.id === socket.id) waitingUser = null;
   });
 });
 
