@@ -14,7 +14,14 @@
       "Bash(grep -n \"await.*\\\\\\\\.update\\\\|await.*\\\\\\\\.set\\\\|firestore.*update\\\\|firestore.*set\" /d/wego_marriage/wego_new/lib/screen/profile_edit.dart)",
       "Bash(flutter pub *)",
       "Bash(flutter clean *)",
-      "Bash(flutter build *)"
+      "Bash(flutter build *)",
+      "WebSearch",
+      "Bash(Get-ChildItem -Path \"D:\\\\wego_marriage\\\\wego_new\" -Recurse -Directory)",
+      "Bash(Select-Object -First 20 FullName)",
+      "Bash(powershell *)",
+      "PowerShell(Get-Content *)",
+      "Bash(Get-ChildItem -Path \"D:\\\\wego_marriage\\\\wego_new\" -Directory)",
+      "Bash(Select-Object Name)"
     ]
   }
 }

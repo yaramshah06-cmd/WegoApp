@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
-import 'package:wego_marriage/widgets/achievement_badge.dart';
+import 'dart:typed_data';
+// achievement_badge.dart mein BadgeData duplicate hai — hide karo
+import 'package:wego_marriage/widgets/achievement_badge.dart' hide BadgeData;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
@@ -17,8 +19,12 @@ import 'package:wego_marriage/screen/create_content_screen.dart';
 import 'package:wego_marriage/screen/payment_screen.dart';
 import 'package:wego_marriage/screen/wego_plan.dart';
 import 'package:wego_marriage/screen/rewards_screen.dart';
+// epic_badges_screen exports BadgeData, kBadgeList, safeBase64Decode — yahi use karein
 import 'package:wego_marriage/screen/epic_badges_screen.dart';
-import 'package:wego_marriage/screen/badge_helper.dart';
+// badge_helper mein safeBase64Decode duplicate hai — hide karo
+import 'package:wego_marriage/screen/badge_helper.dart' hide safeBase64Decode;
+import 'package:wego_marriage/screen/comments_screen.dart';
+import 'package:wego_marriage/screen/user_posts_feed_screen.dart';
 import 'package:wego_marriage/widgets/level_badge.dart';
 import 'app_localizations.dart';
 
@@ -37,11 +43,16 @@ class _MyProfileScreenState extends State<MyProfileScreen>
   final PostService _postService = PostService();
 
   List<UserPost> _userPosts = [];
+  List<UserPost> _userReposts = [];
   bool _isLoadingPosts = true;
+  bool _isLoadingReposts = true;
 
   int _followersCount = 0;
   int _followingCount = 0;
   bool _isLoadingStats = true;
+  // Live count subscriptions — follow/unfollow turant reflect karne ke liye.
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _followersSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _followingSub;
 
   // ── Firebase User ──
   String _firebaseName = '';
@@ -106,6 +117,7 @@ class _MyProfileScreenState extends State<MyProfileScreen>
 
     _loadFirebaseUser();
     _loadUserPosts();
+    _loadUserReposts();
     _loadStats();
     _loadCreditData();
     _loadUserLevel();
@@ -114,6 +126,8 @@ class _MyProfileScreenState extends State<MyProfileScreen>
   @override
   void dispose() {
     _levelStreamSub?.cancel();
+    _followersSub?.cancel();
+    _followingSub?.cancel();
     _scrollController.dispose();
     _gaugeAnimController.dispose();
     _levelAnimController.dispose();
@@ -147,8 +161,6 @@ class _MyProfileScreenState extends State<MyProfileScreen>
   }
 
   // ── Level ─────────────────────────────────────
-  // ✅ Realtime: Firestore se level live listen karte hain.
-  // Jab bhi XPService level badhati hai, UI khud-ba-khud update ho jata hai.
   Future<void> _loadUserLevel() async {
     final uid = _currentUid;
     if (uid == null) {
@@ -237,19 +249,153 @@ class _MyProfileScreenState extends State<MyProfileScreen>
   String _formatWithComma(double v) => '₹${v.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (m) => '${m[1]},')}';
 
   // ── Stats ─────────────────────────────────────
-  Future<void> _loadStats() async {
-    final uid = _currentUid; if (uid == null) return;
-    try {
-      final fol  = await FirebaseFirestore.instance.collection('users').doc(uid).collection('followers').get();
-      final fing = await FirebaseFirestore.instance.collection('users').doc(uid).collection('following').get();
-      if (mounted) setState(() { _followersCount = fol.docs.length; _followingCount = fing.docs.length; _isLoadingStats = false; });
-    } catch (_) { if (mounted) setState(() => _isLoadingStats = false); }
+  // Live listener: jaise hi koi user follow/unfollow karega, counts foran
+  // update ho jayenge — page refresh ki zaroorat nahi.
+  void _loadStats() {
+    final uid = _currentUid;
+    if (uid == null) {
+      if (mounted) setState(() => _isLoadingStats = false);
+      return;
+    }
+    _followersSub?.cancel();
+    _followingSub?.cancel();
+
+    _followersSub = FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .collection('followers')
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+      setState(() {
+        _followersCount = snap.docs.length;
+        _isLoadingStats = false;
+      });
+    }, onError: (_) {
+      if (mounted) setState(() => _isLoadingStats = false);
+    });
+
+    _followingSub = FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .collection('following')
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+      setState(() {
+        _followingCount = snap.docs.length;
+        _isLoadingStats = false;
+      });
+    }, onError: (_) {
+      if (mounted) setState(() => _isLoadingStats = false);
+    });
   }
 
   Future<void> _loadUserPosts() async {
     setState(() => _isLoadingPosts = true);
-    try { final posts = _postService.getUserPosts(); setState(() { _userPosts = posts; _isLoadingPosts = false; }); }
-    catch (_) { setState(() => _isLoadingPosts = false); }
+    try {
+      final localPosts = _postService.getUserPosts();
+      final uid = _currentUid;
+      List<UserPost> firestorePosts = [];
+      if (uid != null) {
+        final snap = await FirebaseFirestore.instance
+            .collection('posts')
+            .where('authorid', isEqualTo: uid)
+            .get();
+
+        firestorePosts = snap.docs.map((d) {
+          final data = d.data();
+          final ts = data['timestamp'];
+          DateTime when = DateTime.now();
+          if (ts is Timestamp) when = ts.toDate();
+
+          final visStr = (data['visibility'] ?? 'everyone').toString();
+          final visibility = PostVisibility.values.firstWhere(
+                (v) => v.name == visStr,
+            orElse: () => PostVisibility.everyone,
+          );
+
+          return UserPost(
+            id: d.id,
+            mediaPath: (data['imageUrl'] ?? '').toString(),
+            caption: (data['text'] ?? '').toString(),
+            contentType: ContentMode.post,
+            timestamp: when,
+            location: (data['location'] ?? '').toString(),
+            hashtags: List<String>.from(data['hashtags'] ?? const []),
+            visibility: visibility,
+            isVideo: data['isVideo'] == true,
+            likes: (data['likesCount'] ?? 0) is int ? data['likesCount'] as int : 0,
+            comments: (data['commentsCount'] ?? 0) is int ? data['commentsCount'] as int : 0,
+          );
+        }).toList();
+      }
+
+      final firestoreIds = firestorePosts.map((p) => p.id).toSet();
+      final merged = <UserPost>[
+        ...firestorePosts,
+        ...localPosts.where((p) => !firestoreIds.contains(p.id)),
+      ];
+      merged.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
+      if (!mounted) return;
+      setState(() { _userPosts = merged; _isLoadingPosts = false; });
+    } catch (e) {
+      debugPrint('Error loading user posts: $e');
+      final posts = _postService.getUserPosts();
+      if (!mounted) return;
+      setState(() { _userPosts = posts; _isLoadingPosts = false; });
+    }
+  }
+
+  // ── Reposts ───────────────────────────────────
+  Future<void> _loadUserReposts() async {
+    setState(() => _isLoadingReposts = true);
+    try {
+      final uid = _currentUid;
+      if (uid == null) {
+        if (mounted) setState(() { _userReposts = []; _isLoadingReposts = false; });
+        return;
+      }
+      final snap = await FirebaseFirestore.instance
+          .collection('posts')
+          .where('repostedBy', arrayContains: uid)
+          .limit(50)
+          .get();
+
+      final reposts = snap.docs.map((d) {
+        final data = d.data();
+        final ts = data['timestamp'];
+        DateTime when = DateTime.now();
+        if (ts is Timestamp) when = ts.toDate();
+        final visStr = (data['visibility'] ?? 'everyone').toString();
+        final visibility = PostVisibility.values.firstWhere(
+              (v) => v.name == visStr,
+          orElse: () => PostVisibility.everyone,
+        );
+        return UserPost(
+          id: d.id,
+          mediaPath: (data['imageUrl'] ?? '').toString(),
+          caption: (data['text'] ?? '').toString(),
+          contentType: ContentMode.post,
+          timestamp: when,
+          location: (data['location'] ?? '').toString(),
+          hashtags: List<String>.from(data['hashtags'] ?? const []),
+          visibility: visibility,
+          isVideo: data['isVideo'] == true,
+          likes: (data['likesCount'] ?? 0) is int ? data['likesCount'] as int : 0,
+          comments: (data['commentsCount'] ?? 0) is int ? data['commentsCount'] as int : 0,
+        );
+      }).toList()
+        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
+      if (!mounted) return;
+      setState(() { _userReposts = reposts; _isLoadingReposts = false; });
+    } catch (e) {
+      debugPrint('Error loading user reposts: $e');
+      if (!mounted) return;
+      setState(() { _userReposts = []; _isLoadingReposts = false; });
+    }
   }
 
   // ── Profile Pic ───────────────────────────────
@@ -293,9 +439,7 @@ class _MyProfileScreenState extends State<MyProfileScreen>
         TextButton(onPressed: () { Navigator.pop(ctx); openAppSettings(); }, child: Text(ctx.tr('open'), style: const TextStyle(color: Color(0xFF3DDC84)))),
       ]));
 
-  // ══════════════════════════════════════════════
-  //  MENU  (Level Meter Card REMOVED — only Gauge Card + Settings remain)
-  // ══════════════════════════════════════════════
+  // ── Menu ──────────────────────────────────────
   void _showMenu(BuildContext context) {
     Navigator.push(context, PageRouteBuilder(
       opaque: false,
@@ -376,14 +520,10 @@ class _MyProfileScreenState extends State<MyProfileScreen>
     ));
   }
 
-  // ══════════════════════════════════════════════
-  //  NEW: HeartMatch-Style Profile Level Meter
-  // ══════════════════════════════════════════════
+  // ── Profile Level Meter (Menu) ────────────────
   Widget _buildProfileLevelMeter(String displayName, String displayPhoto) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardBg = isDark
-        ? Colors.white.withValues(alpha: 0.07)
-        : const Color(0xFFF7F7FA);
+    final cardBg = isDark ? Colors.white.withValues(alpha: 0.07) : const Color(0xFFF7F7FA);
     final borderColor = isDark ? Colors.white.withValues(alpha: 0.1) : Colors.black.withValues(alpha: 0.06);
     final subColor = isDark ? Colors.white54 : Colors.black45;
 
@@ -396,47 +536,25 @@ class _MyProfileScreenState extends State<MyProfileScreen>
     return GestureDetector(
       onTap: () {
         Navigator.pop(context);
-        Navigator.push(
-          context,
-            MaterialPageRoute(builder: (_) => const EpicBadgesScreen())
-        );
+        Navigator.push(context, MaterialPageRoute(builder: (_) => const EpicBadgesScreen()));
       },
       child: Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-      decoration: BoxDecoration(
-        color: cardBg,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: borderColor, width: 1),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.25 : 0.06),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          // ── User Avatar with gradient ring ──
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          color: cardBg,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: borderColor, width: 1),
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: isDark ? 0.25 : 0.06), blurRadius: 12, offset: const Offset(0, 4))],
+        ),
+        child: Row(children: [
           Container(
-            width: 54,
-            height: 54,
+            width: 54, height: 54,
             padding: const EdgeInsets.all(2.5),
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              gradient: const LinearGradient(
-                colors: [xpStart, xpEnd],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: xpStart.withValues(alpha: 0.35),
-                  blurRadius: 10,
-                  offset: const Offset(0, 2),
-                ),
-              ],
+              gradient: const LinearGradient(colors: [xpStart, xpEnd], begin: Alignment.topLeft, end: Alignment.bottomRight),
+              boxShadow: [BoxShadow(color: xpStart.withValues(alpha: 0.35), blurRadius: 10, offset: const Offset(0, 2))],
             ),
             child: Container(
               decoration: BoxDecoration(
@@ -446,149 +564,55 @@ class _MyProfileScreenState extends State<MyProfileScreen>
               child: ClipOval(child: _buildAvatarImage(displayPhoto, xpStart)),
             ),
           ),
-
           const SizedBox(width: 12),
-
-          // ── Name + Level Bar ──
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        displayName.isNotEmpty ? displayName : 'User',
-                        style: TextStyle(
-                          color: isDark ? Colors.white : Colors.black87,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.2,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(colors: [xpStart, xpEnd]),
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: [
-                          BoxShadow(
-                            color: xpStart.withValues(alpha: 0.35),
-                            blurRadius: 6,
-                            offset: const Offset(0, 1),
-                          ),
-                        ],
-                      ),
-                      child: Row(mainAxisSize: MainAxisSize.min, children: const [
-                        Icon(Icons.bolt_rounded, color: Colors.white, size: 12),
-                        SizedBox(width: 2),
-                        Text(
-                          'Level',
-                          style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600),
-                        ),
-                      ]),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 4),
-
-                Row(
-                  children: [
-                    Text(
-                      '$_userLevel',
-                      style: TextStyle(
-                        color: isDark ? Colors.white : Colors.black87,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                        height: 1,
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.only(left: 3, bottom: 1),
-                      child: Text(
-                        '/ 100',
-                        style: TextStyle(color: subColor, fontSize: 11, fontWeight: FontWeight.w500),
-                      ),
-                    ),
-                    const Spacer(),
-                    Text(
-                      _getLevelStatus(_userLevel),
-                      style: TextStyle(
-                        color: _getLevelStatusText(_userLevel),
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 8),
-
-                // ── Animated Progress Bar ──
-                AnimatedBuilder(
-                  animation: _profileLevelAnim,
-                  builder: (_, __) {
-                    return Stack(
-                      children: [
-                        Container(
-                          height: 9,
-                          width: double.infinity,
-                          decoration: BoxDecoration(
-                            color: isDark ? Colors.white.withValues(alpha: 0.12) : Colors.black.withValues(alpha: 0.08),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Flexible(child: Text(displayName.isNotEmpty ? displayName : 'User',
+                  style: TextStyle(color: isDark ? Colors.white : Colors.black87, fontSize: 15, fontWeight: FontWeight.w700, letterSpacing: 0.2),
+                  overflow: TextOverflow.ellipsis)),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(gradient: const LinearGradient(colors: [xpStart, xpEnd]), borderRadius: BorderRadius.circular(20),
+                    boxShadow: [BoxShadow(color: xpStart.withValues(alpha: 0.35), blurRadius: 6, offset: const Offset(0, 1))]),
+                child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.bolt_rounded, color: Colors.white, size: 12),
+                  SizedBox(width: 2),
+                  Text('Level', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600)),
+                ]),
+              ),
+            ]),
+            const SizedBox(height: 4),
+            Row(children: [
+              Text('$_userLevel', style: TextStyle(color: isDark ? Colors.white : Colors.black87, fontSize: 18, fontWeight: FontWeight.w800, height: 1)),
+              Padding(padding: const EdgeInsets.only(left: 3, bottom: 1),
+                  child: Text('/ 100', style: TextStyle(color: subColor, fontSize: 11, fontWeight: FontWeight.w500))),
+              const Spacer(),
+              Text(_getLevelStatus(_userLevel), style: TextStyle(color: _getLevelStatusText(_userLevel), fontSize: 10, fontWeight: FontWeight.w700)),
+            ]),
+            const SizedBox(height: 8),
+            AnimatedBuilder(
+              animation: _profileLevelAnim,
+              builder: (_, __) => Stack(children: [
+                Container(height: 9, width: double.infinity,
+                    decoration: BoxDecoration(
+                        color: isDark ? Colors.white.withValues(alpha: 0.12) : Colors.black.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(10))),
+                FractionallySizedBox(widthFactor: _profileLevelAnim.value,
+                    child: Container(height: 9,
+                        decoration: BoxDecoration(
+                            gradient: const LinearGradient(colors: [xpStart, xpEnd], begin: Alignment.centerLeft, end: Alignment.centerRight),
                             borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                        FractionallySizedBox(
-                          widthFactor: _profileLevelAnim.value,
-                          child: Container(
-                            height: 9,
-                            decoration: BoxDecoration(
-                              gradient: const LinearGradient(
-                                colors: [xpStart, xpEnd],
-                                begin: Alignment.centerLeft,
-                                end: Alignment.centerRight,
-                              ),
-                              borderRadius: BorderRadius.circular(10),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: xpStart.withValues(alpha: 0.55),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 1),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-
-                const SizedBox(height: 6),
-
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      _userLevel >= 100 ? 'MAX LEVEL' : '$remaining XP to Lv $nextLevel',
-                      style: TextStyle(
-                        color: isDark ? Colors.white70 : Colors.black54,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    Text('Lv 100', style: TextStyle(color: subColor, fontSize: 10)),
-                  ],
-                ),
-              ],
+                            boxShadow: [BoxShadow(color: xpStart.withValues(alpha: 0.55), blurRadius: 8, offset: const Offset(0, 1))]))),
+              ]),
             ),
-          ),
-        ],
-      ),
+            const SizedBox(height: 6),
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Text(_userLevel >= 100 ? 'MAX LEVEL' : '$remaining XP to Lv $nextLevel',
+                  style: TextStyle(color: isDark ? Colors.white70 : Colors.black54, fontSize: 10, fontWeight: FontWeight.w600)),
+              Text('Lv 100', style: TextStyle(color: subColor, fontSize: 10)),
+            ]),
+          ])),
+        ]),
       ),
     );
   }
@@ -624,18 +648,15 @@ class _MyProfileScreenState extends State<MyProfileScreen>
         AnimatedBuilder(
             animation: _gaugeAnim,
             builder: (_, __) => SizedBox(
-                width: double.infinity,
-                height: 155,
+                width: double.infinity, height: 155,
                 child: CustomPaint(
                     painter: _CreditGaugePainter(pct: _gaugeAnim.value, arcColor: tierColor, isDark: isDark),
-                    child: Center(
-                        child: Padding(
-                            padding: const EdgeInsets.only(top: 60),
-                            child: Column(mainAxisSize: MainAxisSize.min, children: [
-                              Text(_formatWithComma(_creditLimit),
-                                  style: TextStyle(color: textColor, fontSize: 22, fontWeight: FontWeight.bold)),
-                              Text('Your Credit Limit', style: TextStyle(color: subColor, fontSize: 10)),
-                            ])))))),
+                    child: Center(child: Padding(
+                        padding: const EdgeInsets.only(top: 60),
+                        child: Column(mainAxisSize: MainAxisSize.min, children: [
+                          Text(_formatWithComma(_creditLimit), style: TextStyle(color: textColor, fontSize: 22, fontWeight: FontWeight.bold)),
+                          Text('Your Credit Limit', style: TextStyle(color: subColor, fontSize: 10)),
+                        ])))))),
         Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),
             child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
@@ -651,15 +672,11 @@ class _MyProfileScreenState extends State<MyProfileScreen>
               overlayColor: tierColor.withValues(alpha: 0.15),
               trackHeight: 4),
           child: Slider(
-              value: _creditLimit,
-              min: _minLimit,
-              max: _maxLimit,
-              divisions: 98,
+              value: _creditLimit, min: _minLimit, max: _maxLimit, divisions: 98,
               onChanged: (v) { _animateGauge(_creditPct(v)); setState(() => _creditLimit = v); },
               onChangeEnd: (v) async {
                 final uid = _currentUid; if (uid == null) return;
-                await FirebaseFirestore.instance.collection('users').doc(uid).update(
-                    {'creditLimit': v, 'creditTier': _creditTierName(v)});
+                await FirebaseFirestore.instance.collection('users').doc(uid).update({'creditLimit': v, 'creditTier': _creditTierName(v)});
               }),
         ),
         const SizedBox(height: 8),
@@ -674,19 +691,15 @@ class _MyProfileScreenState extends State<MyProfileScreen>
         SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: _isSavingCredit
-                  ? null
-                  : () {
+              onPressed: _isSavingCredit ? null : () {
                 Navigator.pop(context);
                 Navigator.push(context, MaterialPageRoute(builder: (_) => const PlanScreen()));
               },
               icon: _isSavingCredit
                   ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                   : const Icon(Icons.rocket_launch_rounded, color: Colors.white, size: 16),
-              label: Text(
-                _isSavingCredit ? 'Upgrading...' : 'Upgrade Now',
-                style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
-              ),
+              label: Text(_isSavingCredit ? 'Upgrading...' : 'Upgrade Now',
+                  style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
               style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF185FA5),
                   disabledBackgroundColor: const Color(0xFF185FA5).withValues(alpha: 0.6),
@@ -759,44 +772,50 @@ class _MyProfileScreenState extends State<MyProfileScreen>
       body: ListView(controller: _scrollController, padding: EdgeInsets.zero, children: [
         const SizedBox(height: 20),
 
-        // ── Avatar ──
-        Center(child: Stack(children: [
-          Container(
-            width: 120, height: 120,
-            decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: primaryColor, width: 3),
-                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 20, offset: const Offset(0, 5))]),
-            child: ClipOval(child: _buildAvatarImage(displayPhoto, primaryColor)),
-          ),
-          Positioned(
-              bottom: 0, right: 0,
-              child: GestureDetector(
-                  onTap: _changeProfilePicture,
-                  child: Container(
-                      padding: const EdgeInsets.all(6),
-                      decoration: BoxDecoration(
-                          color: primaryColor,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 2)),
-                      child: const Icon(Icons.camera_alt, color: Colors.white, size: 18)))),
-        ])),
+        // ── Avatar + Badges professional layout ──
+        Center(
+          child: Column(
+            children: [
+              // Profile pic with level badge overlay
+              Stack(
+                clipBehavior: Clip.none,
+                alignment: Alignment.center,
+                children: [
+                  Container(
+                    width: 100, height: 100,
+                    decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: primaryColor, width: 3),
+                        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 20, offset: const Offset(0, 5))]),
+                    child: ClipOval(child: _buildAvatarImage(displayPhoto, primaryColor)),
+                  ),
+                  Positioned(
+                      bottom: 0, right: 0,
+                      child: GestureDetector(
+                          onTap: _changeProfilePicture,
+                          child: Container(
+                              padding: const EdgeInsets.all(5),
+                              decoration: BoxDecoration(
+                                  color: primaryColor,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white, width: 2)),
+                              child: const Icon(Icons.camera_alt, color: Colors.white, size: 16)))),
+                ],
+              ),
 
-        // 🏅 Realtime Level Badge — profile pic ke neeche (same design as other users)
-        const SizedBox(height: 10),
-        if (_currentUid != null)
-          Center(
-            child: LevelBadge(
-              uid: _currentUid!,
-              size: LevelBadgeSize.large,
-            ),
+              // Level badge just below avatar
+              const SizedBox(height: 8),
+              if (_currentUid != null)
+                LevelBadge(uid: _currentUid!, size: LevelBadgeSize.large),
+            ],
           ),
+        ),
 
-        const SizedBox(height: 12),
+        const SizedBox(height: 14),
 
         // ── Name + Verified ──
         Center(child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Text(displayName, style: TextStyle(color: textColor, fontSize: 24, fontWeight: FontWeight.bold)),
+          Text(displayName, style: TextStyle(color: textColor, fontSize: 22, fontWeight: FontWeight.bold)),
           if (_isEmailVerified) ...[
             const SizedBox(width: 6),
             Container(
@@ -813,38 +832,38 @@ class _MyProfileScreenState extends State<MyProfileScreen>
           ],
         ])),
 
-        const SizedBox(height: 6),
-        Center(child: Text(displayUser, style: TextStyle(color: subTextColor, fontSize: 14))),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
+        Center(child: Text(displayUser, style: TextStyle(color: subTextColor, fontSize: 13))),
+
+        const SizedBox(height: 10),
+
+        // ── Unlocked Badges — professional small row ──
         _buildUnlockedBadgesRow(),
+
+        const SizedBox(height: 6),
 
         // ── Level Chip ──
         Center(child: _isLoadingLevel
             ? const SizedBox(height: 24)
             : GestureDetector(
-                onTap: () => Navigator.push(
-                  context,
-                    MaterialPageRoute(builder: (_) => const EpicBadgesScreen())
-                ),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(colors: [
-                      _getLevelColor(_userLevel / 100),
-                      _getLevelColor(_userLevel / 100).withValues(alpha: 0.6),
-                    ]),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.military_tech_rounded, color: Colors.white, size: 14),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Level $_userLevel — ${_getLevelStatus(_userLevel)}',
-                      style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
-                    ),
-                  ]),
-                ),
-              )),
+          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const EpicBadgesScreen())),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(colors: [
+                _getLevelColor(_userLevel / 100),
+                _getLevelColor(_userLevel / 100).withValues(alpha: 0.6),
+              ]),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.military_tech_rounded, color: Colors.white, size: 14),
+              const SizedBox(width: 4),
+              Text('Level $_userLevel — ${_getLevelStatus(_userLevel)}',
+                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+            ]),
+          ),
+        )),
 
         const SizedBox(height: 24),
         _buildStatsSection(context),
@@ -852,6 +871,38 @@ class _MyProfileScreenState extends State<MyProfileScreen>
         Container(key: _postsKey, child: _buildPostsSection()),
         const SizedBox(height: 20),
       ]),
+    );
+  }
+
+  // ══════════════════════════════════════════════
+  // 🏅 PROFESSIONAL BADGE ROW
+  //    - Chote badges (36px), naam ke neeche
+  //    - No floating animation, subtle glow only
+  //    - Tap => EpicBadgesScreen
+  // ══════════════════════════════════════════════
+  Widget _buildUnlockedBadgesRow() {
+    if (_isLoadingLevel) return const SizedBox(height: 4);
+
+    final unlockedBadges = kBadgeList.where((b) => _userLevel >= b.level).toList();
+    if (unlockedBadges.isEmpty) return const SizedBox(height: 4);
+
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const EpicBadgesScreen()),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: List.generate(unlockedBadges.length, (i) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: _TinyBadge(badge: unlockedBadges[i]),
+            );
+          }),
+        ),
+      ),
     );
   }
 
@@ -912,51 +963,130 @@ class _MyProfileScreenState extends State<MyProfileScreen>
     final isDark    = Theme.of(context).brightness == Brightness.dark;
     final textColor = isDark ? Colors.white : Colors.black87;
     return Container(
-        margin: const EdgeInsets.symmetric(horizontal: 20),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            Text(context.tr('my_posts'), style: TextStyle(color: textColor, fontSize: 18, fontWeight: FontWeight.bold)),
-            if (_userPosts.isNotEmpty)
-              TextButton.icon(
-                  onPressed: () => _showPostsOptions(context),
-                  icon: Icon(Icons.more_vert, color: textColor, size: 16),
-                  label: Text(context.tr('options'), style: TextStyle(color: textColor, fontSize: 12))),
+      margin: const EdgeInsets.symmetric(horizontal: 20),
+      child: _MyProfileTabsSection(
+        isDark: isDark,
+        textColor: textColor,
+        postsLabel: context.tr('my_posts'),
+        repostsLabel: context.tr('reposts'),
+        isLoadingPosts: _isLoadingPosts,
+        isLoadingReposts: _isLoadingReposts,
+        posts: _userPosts,
+        reposts: _userReposts,
+        emptyPostsBuilder: (ctx) => Container(
+          padding: const EdgeInsets.all(32),
+          child: Column(children: [
+            Icon(Icons.photo_library_outlined, size: 64, color: textColor.withValues(alpha: 0.5)),
+            const SizedBox(height: 16),
+            Text(context.tr('no_posts_yet'), style: TextStyle(color: textColor.withValues(alpha: 0.7), fontSize: 16)),
+            const SizedBox(height: 8),
+            Text(context.tr('create_first_post'), style: TextStyle(color: textColor.withValues(alpha: 0.5), fontSize: 14)),
           ]),
-          const SizedBox(height: 12),
-          if (_isLoadingPosts)
-            const Center(child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator()))
-          else if (_userPosts.isEmpty)
-            Container(padding: const EdgeInsets.all(32), child: Column(children: [
-              Icon(Icons.photo_library_outlined, size: 64, color: textColor.withValues(alpha: 0.5)),
-              const SizedBox(height: 16),
-              Text(context.tr('no_posts_yet'),      style: TextStyle(color: textColor.withValues(alpha: 0.7), fontSize: 16)),
-              const SizedBox(height: 8),
-              Text(context.tr('create_first_post'), style: TextStyle(color: textColor.withValues(alpha: 0.5), fontSize: 14)),
-            ]))
-          else
-            GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, crossAxisSpacing: 4, mainAxisSpacing: 4),
-                itemCount: _userPosts.length,
-                itemBuilder: (ctx, i) {
-                  final post = _userPosts[i];
-                  return GestureDetector(
-                      onTap: () => _showUserPostDetail(ctx, post),
-                      onLongPress: () => _showPostOptions(ctx, post),
+        ),
+        emptyRepostsBuilder: (ctx) => Container(
+          padding: const EdgeInsets.all(32),
+          child: Column(children: [
+            Icon(Icons.repeat, size: 64, color: textColor.withValues(alpha: 0.5)),
+            const SizedBox(height: 16),
+            Text(context.tr('no_reposts_yet'), style: TextStyle(color: textColor.withValues(alpha: 0.7), fontSize: 16)),
+          ]),
+        ),
+        tileBuilder: (ctx, post) => GestureDetector(
+          onTap: () => _openPostFullscreen(ctx, post),
+          onLongPress: () => _showPostOptions(ctx, post),
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 8, offset: const Offset(0, 2))],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Stack(children: [
+                Positioned.fill(child: _buildPostMedia(post)),
+                if (post.isVideo)
+                  Positioned(top: 8, right: 8,
                       child: Container(
-                          decoration: BoxDecoration(borderRadius: BorderRadius.circular(8),
-                              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 8, offset: const Offset(0, 2))]),
-                          child: ClipRRect(borderRadius: BorderRadius.circular(8), child: Stack(children: [
-                            _buildPostMedia(post),
-                            if (post.isVideo)
-                              Positioned(top: 8, right: 8,
-                                  child: Container(padding: const EdgeInsets.all(4),
-                                      decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
-                                      child: const Icon(Icons.play_arrow, color: Colors.white, size: 16))),
-                          ]))));
-                }),
-        ]));
+                          padding: const EdgeInsets.all(4),
+                          decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+                          child: const Icon(Icons.play_arrow, color: Colors.white, size: 16))),
+                Positioned(left: 0, right: 0, bottom: 0, child: _buildTileStatsOverlay(post)),
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailStatsRow(BuildContext dialogCtx, UserPost post) {
+    final isFirestoreId = !post.id.contains('_');
+    if (!isFirestoreId) {
+      return Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
+        _buildStat(Icons.favorite_border, '${post.likes}'),
+        _buildStat(Icons.chat_bubble_outline, '${post.comments}'),
+        _buildStat(Icons.visibility, post.visibility.name),
+      ]);
+    }
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance.collection('posts').doc(post.id).snapshots(),
+      builder: (context, snap) {
+        final data = (snap.hasData && snap.data!.exists) ? (snap.data!.data() ?? {}) : <String, dynamic>{};
+        final likes    = (data['likesCount']    ?? post.likes)    as int;
+        final comments = (data['commentsCount'] ?? post.comments) as int;
+        final shares   = (data['shareCount']    ?? 0)             as int;
+        return Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
+          _buildStat(Icons.favorite_border, '$likes'),
+          GestureDetector(
+              onTap: () {
+                Navigator.pop(dialogCtx);
+                Navigator.push(context, MaterialPageRoute(builder: (_) => CommentsScreen(
+                    postId: post.id, postUsername: _firebaseName,
+                    currentUserAvatar: _firebasePhotoUrl, currentUsername: _firebaseName)));
+              },
+              child: _buildStat(Icons.chat_bubble_outline, '$comments')),
+          _buildStat(Icons.share, '$shares'),
+        ]);
+      },
+    );
+  }
+
+  Widget _buildTileStatsOverlay(UserPost post) {
+    final isFirestoreId = !post.id.contains('_');
+    if (!isFirestoreId) return const SizedBox.shrink();
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance.collection('posts').doc(post.id).snapshots(),
+      builder: (context, snap) {
+        if (!snap.hasData || !snap.data!.exists) return const SizedBox.shrink();
+        final data     = snap.data!.data() ?? {};
+        final likes    = (data['likesCount']    ?? 0) as int;
+        final comments = (data['commentsCount'] ?? 0) as int;
+        final shares   = (data['shareCount']    ?? 0) as int;
+        if (likes == 0 && comments == 0 && shares == 0) return const SizedBox.shrink();
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          decoration: const BoxDecoration(
+              gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                  colors: [Colors.transparent, Color(0xCC000000)])),
+          child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+            _tileStat(Icons.favorite, likes),
+            _tileStat(Icons.chat_bubble, comments),
+            if (shares > 0) _tileStat(Icons.share, shares),
+          ]),
+        );
+      },
+    );
+  }
+
+  Widget _tileStat(IconData icon, int n) => Row(mainAxisSize: MainAxisSize.min, children: [
+    Icon(icon, color: Colors.white, size: 12),
+    const SizedBox(width: 3),
+    Text(_compactCount(n), style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600)),
+  ]);
+
+  String _compactCount(int n) {
+    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
+    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
+    return n.toString();
   }
 
   Widget _buildPostMedia(UserPost post) {
@@ -968,6 +1098,33 @@ class _MyProfileScreenState extends State<MyProfileScreen>
     final f = File(post.mediaPath);
     if (f.existsSync()) return Image.file(f, fit: BoxFit.cover, width: double.infinity, height: double.infinity, errorBuilder: (_, __, ___) => ph);
     return ph;
+  }
+
+  // Instagram-style scrollable feed khole — saari user posts ek vertical
+  // list mein, tapped post se shuru. Firestore-backed posts ke liye yahi
+  // best UX hai (like / comment / share / repost sab inline). Local-only
+  // posts (id mein `_`) ke liye purana dialog fallback rakha.
+  void _openPostFullscreen(BuildContext context, UserPost post) {
+    final isFirestoreId = !post.id.contains('_');
+    if (!isFirestoreId) {
+      _showUserPostDetail(context, post);
+      return;
+    }
+    final uid = _currentUid;
+    if (uid == null) {
+      _showUserPostDetail(context, post);
+      return;
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => UserPostsFeedScreen(
+          userId: uid,
+          initialPostId: post.id,
+          title: _firebaseName.isEmpty ? 'Posts' : '@$_firebaseName',
+        ),
+      ),
+    );
   }
 
   void _showUserPostDetail(BuildContext context, UserPost post) {
@@ -1007,11 +1164,7 @@ class _MyProfileScreenState extends State<MyProfileScreen>
                           materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                           padding: EdgeInsets.zero)).toList())),
                 const SizedBox(height: 16),
-                Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-                  _buildStat(Icons.favorite_border, '${post.likes}'),
-                  _buildStat(Icons.chat_bubble_outline, '${post.comments}'),
-                  _buildStat(Icons.visibility, post.visibility.name),
-                ]),
+                _buildDetailStatsRow(ctx, post),
                 const SizedBox(height: 12),
                 Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
                   TextButton.icon(onPressed: () => Navigator.pop(ctx), icon: const Icon(Icons.close), label: Text(context.tr('close'))),
@@ -1035,40 +1188,38 @@ class _MyProfileScreenState extends State<MyProfileScreen>
           _buildOptionTile(Icons.delete, context.tr('delete_post'), () async {
             Navigator.pop(ctx);
             if (await _showDeleteConfirmation(ctx)) {
-              if (await _postService.deletePost(post.id)) {
-                _loadUserPosts();
-                if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.tr('post_deleted_success')), backgroundColor: Colors.green));
-              } else {
-                if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.tr('delete_post_failed')), backgroundColor: Colors.red));
+              // 1) Firestore se permanent delete — warna stream wapas le aata hai.
+              bool fsOk = true;
+              try {
+                await FirebaseFirestore.instance
+                    .collection('posts')
+                    .doc(post.id)
+                    .delete();
+              } catch (e) {
+                fsOk = false;
+                debugPrint('Firestore delete failed: $e');
+              }
+              // 2) Local cache bhi clean karo (drafts/locally-created posts).
+              final localOk = await _postService.deletePost(post.id);
+              // 3) Optimistic UI — list se turant hata do, phir refresh.
+              if (mounted) {
+                setState(() {
+                  _userPosts.removeWhere((p) => p.id == post.id);
+                });
+              }
+              _loadUserPosts();
+
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text((fsOk || localOk)
+                      ? context.tr('post_deleted_success')
+                      : context.tr('delete_post_failed')),
+                  backgroundColor:
+                      (fsOk || localOk) ? Colors.green : Colors.red,
+                ));
               }
             }
           }, iconColor: Colors.red),
-          const SizedBox(height: 16),
-        ])));
-  }
-
-  void _showPostsOptions(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    showModalBottomSheet(context: context,
-        backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.white,
-        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-        builder: (ctx) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Container(width: 40, height: 4, margin: const EdgeInsets.only(top: 8, bottom: 16),
-              decoration: BoxDecoration(color: isDark ? Colors.grey[600] : Colors.grey[300], borderRadius: BorderRadius.circular(2))),
-          _buildOptionTile(Icons.backup, context.tr('backup_posts'), () async {
-            Navigator.pop(ctx);
-            final p = await _postService.exportPostsToBackup();
-            if (p != null && mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Backed up: $p'), backgroundColor: Colors.green));
-          }),
-          _buildOptionTile(Icons.restore, context.tr('restore_backup'), () async {
-            Navigator.pop(ctx);
-            if (await _postService.importPostsFromBackup()) {
-              _loadUserPosts();
-              if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.tr('posts_restored_success')), backgroundColor: Colors.green));
-            } else {
-              if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.tr('backup_not_found')), backgroundColor: Colors.orange));
-            }
-          }),
           const SizedBox(height: 16),
         ])));
   }
@@ -1104,77 +1255,6 @@ class _MyProfileScreenState extends State<MyProfileScreen>
             TextButton(onPressed: () => Navigator.pop(ctx, true), style: TextButton.styleFrom(foregroundColor: Colors.red), child: Text(context.tr('delete'))),
           ])) ?? false;
 
-  // ══════════════════════════════════════════════
-  //  Unlocked Badges Row — realtime under username
-  //  Level 60/70/80/90/100 par alag-alag badge unlock hota hai.
-  //  Jaise hi user us level pe pohanche, neeche row me badge appear ho jata hai.
-  // ══════════════════════════════════════════════
-  Widget _buildUnlockedBadgesRow() {
-    if (_isLoadingLevel) return const SizedBox(height: 4);
-
-    const tiers = <_UnlockedTier>[
-      _UnlockedTier(60,  'Gold',      Color(0xFFFFD700), Color(0xFFFFA000), Icons.emoji_events),
-      _UnlockedTier(70,  'Silver',    Color(0xFFC0C0C0), Color(0xFF607D8B), Icons.military_tech),
-      _UnlockedTier(80,  'Platinum',  Color(0xFF87CEEB), Color(0xFF1565C0), Icons.shield),
-      _UnlockedTier(90,  'Diamond',   Color(0xFF00E5FF), Color(0xFF00BCD4), Icons.diamond),
-      _UnlockedTier(100, 'Legendary', Color(0xFF9B59B6), Color(0xFF6A0DAD), Icons.workspace_premium),
-    ];
-
-    final unlocked = tiers.where((t) => _userLevel >= t.level).toList();
-    if (unlocked.isEmpty) return const SizedBox(height: 4);
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-      child: Center(
-        child: Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          alignment: WrapAlignment.center,
-          children: unlocked.map((t) {
-            return GestureDetector(
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const EpicBadgesScreen()),
-              ),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [t.start, t.end],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.white.withValues(alpha: 0.25), width: 1),
-                  boxShadow: [
-                    BoxShadow(
-                      color: t.end.withValues(alpha: 0.35),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(t.icon, color: Colors.white, size: 13),
-                  const SizedBox(width: 4),
-                  Text(
-                    '${t.name} • Lv ${t.level}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.3,
-                    ),
-                  ),
-                ]),
-              ),
-            );
-          }).toList(),
-        ),
-      ),
-    );
-  }
-
   Widget _buildStatItem(BuildContext context, String label, String value) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Column(children: [
@@ -1183,18 +1263,6 @@ class _MyProfileScreenState extends State<MyProfileScreen>
       Text(label, style: TextStyle(color: isDark ? Colors.white70 : Colors.black54, fontSize: 13)),
     ]);
   }
-}
-
-// ══════════════════════════════════════════════
-//  Unlocked Badge Tier (60/70/80/90/100)
-// ══════════════════════════════════════════════
-class _UnlockedTier {
-  final int level;
-  final String name;
-  final Color start;
-  final Color end;
-  final IconData icon;
-  const _UnlockedTier(this.level, this.name, this.start, this.end, this.icon);
 }
 
 // ══════════════════════════════════════════════
@@ -1208,6 +1276,49 @@ class _LevelFeature {
   final Color badgeBg;
   final Color iconColor;
   const _LevelFeature(this.level, this.name, this.desc, this.icon, this.badgeBg, this.iconColor);
+}
+
+// ══════════════════════════════════════════════
+//  🏅 TINY BADGE — profile row ke liye
+//     Static (no animation), 38px, subtle glow
+// ══════════════════════════════════════════════
+class _TinyBadge extends StatefulWidget {
+  final BadgeData badge;
+  const _TinyBadge({required this.badge});
+
+  @override
+  State<_TinyBadge> createState() => _TinyBadgeState();
+}
+
+class _TinyBadgeState extends State<_TinyBadge> {
+  Uint8List? _bytes;
+
+  @override
+  void initState() {
+    super.initState();
+    _bytes = safeBase64Decode(widget.badge.badgeB64);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 38,
+      height: 38,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: widget.badge.glowColor.withValues(alpha: 0.45),
+            blurRadius: 10,
+            spreadRadius: 0,
+          ),
+        ],
+      ),
+      child: _bytes != null
+          ? Image.memory(_bytes!, fit: BoxFit.contain, gaplessPlayback: true)
+          : Icon(Icons.emoji_events_rounded, color: widget.badge.glowColor, size: 22),
+    );
+  }
 }
 
 // ══════════════════════════════════════════════
@@ -1244,4 +1355,100 @@ class _CreditGaugePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_CreditGaugePainter old) => old.pct != pct || old.arcColor != arcColor;
+}
+
+// ══════════════════════════════════════════════
+//  Two-tab section: My Posts + Reposts
+// ══════════════════════════════════════════════
+class _MyProfileTabsSection extends StatefulWidget {
+  const _MyProfileTabsSection({
+    required this.isDark,
+    required this.textColor,
+    required this.postsLabel,
+    required this.repostsLabel,
+    required this.isLoadingPosts,
+    required this.isLoadingReposts,
+    required this.posts,
+    required this.reposts,
+    required this.emptyPostsBuilder,
+    required this.emptyRepostsBuilder,
+    required this.tileBuilder,
+  });
+
+  final bool isDark;
+  final Color textColor;
+  final String postsLabel;
+  final String repostsLabel;
+  final bool isLoadingPosts;
+  final bool isLoadingReposts;
+  final List<UserPost> posts;
+  final List<UserPost> reposts;
+  final Widget Function(BuildContext) emptyPostsBuilder;
+  final Widget Function(BuildContext) emptyRepostsBuilder;
+  final Widget Function(BuildContext, UserPost) tileBuilder;
+
+  @override
+  State<_MyProfileTabsSection> createState() => _MyProfileTabsSectionState();
+}
+
+class _MyProfileTabsSectionState extends State<_MyProfileTabsSection>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabController;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(() { if (mounted) setState(() {}); });
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  Widget _grid(List<UserPost> items) {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3, crossAxisSpacing: 4, mainAxisSpacing: 4),
+      itemCount: items.length,
+      itemBuilder: (ctx, i) => widget.tileBuilder(ctx, items[i]),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final primaryColor = const Color(0xFF4A6CF7);
+    final activeIndex = _tabController.index;
+
+    Widget activeBody;
+    if (activeIndex == 0) {
+      activeBody = widget.isLoadingPosts
+          ? const Center(child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator()))
+          : widget.posts.isEmpty ? widget.emptyPostsBuilder(context) : _grid(widget.posts);
+    } else {
+      activeBody = widget.isLoadingReposts
+          ? const Center(child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator()))
+          : widget.reposts.isEmpty ? widget.emptyRepostsBuilder(context) : _grid(widget.reposts);
+    }
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      TabBar(
+        controller: _tabController,
+        labelColor: primaryColor,
+        unselectedLabelColor: widget.isDark ? Colors.white70 : Colors.black54,
+        indicatorColor: primaryColor,
+        indicatorWeight: 2.5,
+        tabs: [
+          Tab(icon: const Icon(Icons.grid_view_rounded, size: 20), text: widget.postsLabel),
+          Tab(icon: const Icon(Icons.repeat, size: 20), text: widget.repostsLabel),
+        ],
+      ),
+      const SizedBox(height: 12),
+      activeBody,
+    ]);
+  }
 }

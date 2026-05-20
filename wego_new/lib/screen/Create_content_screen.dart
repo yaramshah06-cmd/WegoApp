@@ -17,9 +17,11 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart' as vt;
 import 'package:wego_marriage/services/local_storage_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'xp_service.dart';
 import 'app_localizations.dart';
 import 'app_translations.dart';
+import 'my_profile.dart';
 // ─── Enums ───────────────────────────────────────────────────
 enum ContentMode { post, story, reel }
 
@@ -3127,8 +3129,12 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
           .collection('users')
           .doc(currentUser.uid)
           .get();
-      final userData = userDoc.data() as Map<String, dynamic>;
+      final userData = (userDoc.data() as Map<String, dynamic>?) ?? {};
       final isStory = widget.mode == ContentMode.story;
+      final isReel = widget.mode == ContentMode.reel;
+
+      // Upload primary media once. We may reuse the same URL when the user
+      // also opted into the cross-share (story <-> post/reel).
       String imageUrl = '';
       if (widget.imageBytes != null) {
         final tempDir = await getTemporaryDirectory();
@@ -3148,9 +3154,8 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
       }
 
       // ✅ STICKER: Build caption with stickers
-      final stickerEmojis = _selectedStickers
-          .map((s) => s.emoji)
-          .join(' ');
+      final stickerEmojis =
+          _selectedStickers.map((s) => s.emoji).join(' ');
       final captionText = _captionController.text.trim();
 
       // Close friends ke liye following list fetch karo
@@ -3172,86 +3177,140 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
               ? 'close_friends'
               : 'only_me';
 
-      // ── STORY branch: write to `stories` collection ──
+      final username = (userData['username'] as String?) ?? '';
+      final photoUrl = (userData['photoUrl'] as String?) ?? '';
+
+      // Shared payload builders ─────────────────────────────────
+      Map<String, dynamic> _buildStoryDoc() => {
+            'userId': currentUser.uid,
+            'username': username,
+            'avatarUrl': photoUrl,
+            'imageUrl': imageUrl,
+            'isVideo': widget.isVideo,
+            'caption': captionText,
+            'createdAt': FieldValue.serverTimestamp(),
+            'visibility': visibilityStr,
+            'allowedUids': allowedUids,
+            'location': _location,
+            'hashtags': _hashtags,
+            'taggedUsers': _taggedUsers
+                .map((u) => {
+                      'uid': u.uid,
+                      'username': u.username,
+                      'photoUrl': u.photoUrl,
+                    })
+                .toList(),
+            'hasTaggedUsers': _taggedUsers.isNotEmpty,
+            'stickers': _selectedStickers
+                .map((s) => {
+                      'emoji': s.emoji,
+                      'label': s.label,
+                      'category': s.category,
+                    })
+                .toList(),
+            'hasStickers': _selectedStickers.isNotEmpty,
+            'stickerEmojis': stickerEmojis,
+            if (_poll != null) 'poll': _poll!.toMap(),
+            'hasPoll': _poll != null,
+          };
+
+      Map<String, dynamic> _buildPostDoc() => {
+            'authorid': currentUser.uid,
+            'username': username,
+            'photoUrl': photoUrl,
+            'text': [
+              captionText,
+              if (_hashtags.isNotEmpty) _hashtags.join(' '),
+            ].where((s) => s.isNotEmpty).join('\n'),
+            'caption': captionText,
+            'imageUrl': imageUrl,
+            'timestamp': FieldValue.serverTimestamp(),
+            'likesCount': 0,
+            'commentsCount': 0,
+            'visibility': visibilityStr,
+            'allowedUids': allowedUids,
+            'isVideo': widget.isVideo,
+            'isReel': isReel,
+            'mode': widget.mode.name,
+            'location': _location,
+            'hashtags': _hashtags,
+            'hideLikeCount': _hideLikeCount,
+            'hideShareCount': _hideShareCount,
+            'turnOffCommenting': _turnOffCommenting,
+            'taggedUsers': _taggedUsers
+                .map((u) => {
+                      'uid': u.uid,
+                      'username': u.username,
+                      'photoUrl': u.photoUrl,
+                    })
+                .toList(),
+            'hasTaggedUsers': _taggedUsers.isNotEmpty,
+            if (_poll != null) 'poll': _poll!.toMap(),
+            'hasPoll': _poll != null,
+            'stickers': _selectedStickers
+                .map((s) => {
+                      'emoji': s.emoji,
+                      'label': s.label,
+                      'category': s.category,
+                    })
+                .toList(),
+            'hasStickers': _selectedStickers.isNotEmpty,
+            'stickerEmojis': stickerEmojis,
+            if (_linkedReel != null) 'linkedReel': _linkedReel,
+          };
+
+      // ── STORY branch ─────────────────────────────────────────
       if (isStory) {
-        await FirebaseFirestore.instance.collection('stories').add({
-          'userId': currentUser.uid,
-          'username': userData['username'] ?? '',
-          'avatarUrl': userData['photoUrl'] ?? '',
-          'imageUrl': imageUrl,
-          'isVideo': widget.isVideo,
-          'caption': captionText,
-          'createdAt': FieldValue.serverTimestamp(),
-          'visibility': visibilityStr,
-          'allowedUids': allowedUids,
-        });
+        await FirebaseFirestore.instance
+            .collection('stories')
+            .add(_buildStoryDoc());
+
+        // "Also share on Post" → bhi post create karo
+        if (_alsoShareEnabled) {
+          await FirebaseFirestore.instance
+              .collection('posts')
+              .add(_buildPostDoc());
+        }
 
         await XPService.addXP(currentUser.uid, XPAction.postBanana);
 
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Story share ho gayi! ✅'),
-            backgroundColor: Color(0xFF0095F6),
-            duration: Duration(seconds: 2),
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(_alsoShareEnabled
+                ? 'Story + Post share ho gaye! ✅'
+                : 'Story share ho gayi! ✅'),
+            backgroundColor: const Color(0xFF0095F6),
+            duration: const Duration(seconds: 2),
           ));
-          int count = 0;
-          Navigator.of(context).popUntil((_) => count++ >= 3);
+          _goToMyProfile();
         }
         return;
       }
 
-      final postRef = await FirebaseFirestore.instance.collection('posts').add({
-        'authorid': currentUser.uid,
-        'username': userData['username'] ?? '',
-        'photoUrl': userData['photoUrl'] ?? '',
-        'text': [
-          captionText,
-          if (_hashtags.isNotEmpty) _hashtags.join(' '),
-        ].where((s) => s.isNotEmpty).join('\n'),
-        'imageUrl': imageUrl,
-        'timestamp': FieldValue.serverTimestamp(),
-        'likesCount': 0,
-        'commentsCount': 0,
-        'visibility': visibilityStr,
-        // ✅ NEW: Allowed UIDs for close_friends filtering
-        'allowedUids': allowedUids,
-        'isVideo': widget.isVideo,
-        'location': _location,
-        'hashtags': _hashtags,
-        'hideLikeCount': _hideLikeCount,
-        'turnOffCommenting': _turnOffCommenting,
-        'taggedUsers': _taggedUsers
-            .map((u) => {
-          'uid': u.uid,
-          'username': u.username,
-          'photoUrl': u.photoUrl
-        })
-            .toList(),
-        'hasTaggedUsers': _taggedUsers.isNotEmpty,
-        if (_poll != null) 'poll': _poll!.toMap(),
-        'hasPoll': _poll != null,
-        'stickers': _selectedStickers
-            .map((s) => {
-          'emoji': s.emoji,
-          'label': s.label,
-          'category': s.category,
-        })
-            .toList(),
-        'hasStickers': _selectedStickers.isNotEmpty,
-        'stickerEmojis': stickerEmojis,
-      });
+      // ── POST / REEL branch ───────────────────────────────────
+      await FirebaseFirestore.instance
+          .collection('posts')
+          .add(_buildPostDoc());
+
+      // "Also share on Story" → ek story bhi banao
+      if (_alsoShareEnabled) {
+        await FirebaseFirestore.instance
+            .collection('stories')
+            .add(_buildStoryDoc());
+      }
 
       // 🎁 +100 XP for creating a post
       await XPService.addXP(currentUser.uid, XPAction.postBanana);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Post share ho gaya! ✅'),
-          backgroundColor: Color(0xFF0095F6),
-          duration: Duration(seconds: 2),
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(_alsoShareEnabled
+              ? 'Post + Story share ho gaye! ✅'
+              : 'Post share ho gaya! ✅'),
+          backgroundColor: const Color(0xFF0095F6),
+          duration: const Duration(seconds: 2),
         ));
-        int count = 0;
-        Navigator.of(context).popUntil((_) => count++ >= 3);
+        _goToMyProfile();
       }
     } catch (e) {
       setState(() => _isUploading = false);
@@ -3262,11 +3321,76 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
     }
   }
 
-  void _saveDraft() {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('Draft saved!')));
-    int count = 0;
-    Navigator.of(context).popUntil((_) => count++ >= 3);
+  // Post-share / save-draft ke baad seedha "My Profile" par bhejo.
+  // Root tak `popUntil` se baki stack hat jaata hai, phir
+  // MyProfileScreen push karte hain — user ko apna naya post foran dikhe.
+  void _goToMyProfile() {
+    final navigator = Navigator.of(context);
+    navigator.popUntil((route) => route.isFirst);
+    navigator.push(MaterialPageRoute(
+      builder: (_) => const MyProfileScreen(),
+    ));
+  }
+
+  void _saveDraft() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anon';
+      final draft = {
+        'caption': _captionController.text,
+        'mode': widget.mode.name,
+        'isVideo': widget.isVideo,
+        'visibility': _visibility.name,
+        'location': _location,
+        'hashtags': _hashtags,
+        'hideLikeCount': _hideLikeCount,
+        'hideShareCount': _hideShareCount,
+        'turnOffCommenting': _turnOffCommenting,
+        'taggedUsers': _taggedUsers
+            .map((u) => {
+                  'uid': u.uid,
+                  'username': u.username,
+                  'photoUrl': u.photoUrl,
+                })
+            .toList(),
+        'stickers': _selectedStickers
+            .map((s) => {
+                  'emoji': s.emoji,
+                  'label': s.label,
+                  'category': s.category,
+                })
+            .toList(),
+        if (_poll != null) 'poll': _poll!.toMap(),
+        if (_linkedReel != null) 'linkedReel': _linkedReel,
+        'alsoShareEnabled': _alsoShareEnabled,
+        'savedAt': DateTime.now().toIso8601String(),
+      };
+      // Multiple drafts ki list maintain karte hain.
+      final key = 'drafts_$uid';
+      final existing = prefs.getStringList(key) ?? [];
+      existing.add(jsonEncode(draft));
+      // Last 20 drafts hi rakhein — purane chhod do.
+      final trimmed = existing.length > 20
+          ? existing.sublist(existing.length - 20)
+          : existing;
+      await prefs.setStringList(key, trimmed);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Draft saved! ✅'),
+          backgroundColor: Color(0xFF0095F6),
+          duration: Duration(seconds: 2),
+        ));
+        _goToMyProfile();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Draft save failed: $e'),
+          backgroundColor: Colors.red,
+        ));
+      }
+    }
   }
 
   Widget _buildThumbnail() {
@@ -4475,21 +4599,147 @@ class _TextPostDetailsScreenState
     }
   }
 
-  void _share() {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(
-          'Text ${widget.mode.name} shared! Visibility: $_visibilityLabel'),
-      backgroundColor: const Color(0xFF0095F6),
-    ));
-    int count = 0;
-    Navigator.of(context).popUntil((_) => count++ >= 3);
+  void _share() async {
+    try {
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser == null) throw Exception('Login nahi hai');
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(currentUser.uid)
+          .get();
+      final userData = (userDoc.data() as Map<String, dynamic>?) ?? {};
+
+      List<String> allowedUids = [];
+      if (_visibility == PostVisibility.closeFriends) {
+        final followingSnap = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(currentUser.uid)
+            .collection('following')
+            .get();
+        allowedUids = followingSnap.docs.map((d) => d.id).toList();
+        allowedUids.add(currentUser.uid);
+      }
+
+      final visibilityStr = _visibility == PostVisibility.everyone
+          ? 'everyone'
+          : _visibility == PostVisibility.closeFriends
+              ? 'close_friends'
+              : 'only_me';
+
+      final isStory = widget.mode == ContentMode.story;
+      final username = (userData['username'] as String?) ?? '';
+      final photoUrl = (userData['photoUrl'] as String?) ?? '';
+
+      if (isStory) {
+        await FirebaseFirestore.instance.collection('stories').add({
+          'userId': currentUser.uid,
+          'username': username,
+          'avatarUrl': photoUrl,
+          'imageUrl': '',
+          'isVideo': false,
+          'isText': true,
+          'caption': widget.text,
+          'text': widget.text,
+          'bgColor': widget.bgColor.value,
+          'textColor': widget.textColor.value,
+          'isBold': widget.isBold,
+          'fontSize': widget.fontSize,
+          'createdAt': FieldValue.serverTimestamp(),
+          'visibility': visibilityStr,
+          'allowedUids': allowedUids,
+          'location': _location,
+        });
+      } else {
+        await FirebaseFirestore.instance.collection('posts').add({
+          'authorid': currentUser.uid,
+          'username': username,
+          'photoUrl': photoUrl,
+          'text': widget.text,
+          'caption': widget.text,
+          'imageUrl': '',
+          'isText': true,
+          'bgColor': widget.bgColor.value,
+          'textColor': widget.textColor.value,
+          'isBold': widget.isBold,
+          'fontSize': widget.fontSize,
+          'timestamp': FieldValue.serverTimestamp(),
+          'likesCount': 0,
+          'commentsCount': 0,
+          'visibility': visibilityStr,
+          'allowedUids': allowedUids,
+          'isVideo': false,
+          'isReel': widget.mode == ContentMode.reel,
+          'mode': widget.mode.name,
+          'location': _location,
+        });
+      }
+
+      await XPService.addXP(currentUser.uid, XPAction.postBanana);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              'Text ${widget.mode.name} share ho gaya! Visibility: $_visibilityLabel'),
+          backgroundColor: const Color(0xFF0095F6),
+        ));
+        final navigator = Navigator.of(context);
+        navigator.popUntil((route) => route.isFirst);
+        navigator.push(MaterialPageRoute(
+          builder: (_) => const MyProfileScreen(),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red));
+      }
+    }
   }
 
-  void _saveDraft() {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('Draft saved!')));
-    int count = 0;
-    Navigator.of(context).popUntil((_) => count++ >= 3);
+  void _saveDraft() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anon';
+      final draft = {
+        'text': widget.text,
+        'bgColor': widget.bgColor.value,
+        'textColor': widget.textColor.value,
+        'isBold': widget.isBold,
+        'fontSize': widget.fontSize,
+        'mode': widget.mode.name,
+        'visibility': _visibility.name,
+        'location': _location,
+        'isText': true,
+        'savedAt': DateTime.now().toIso8601String(),
+      };
+      final key = 'drafts_$uid';
+      final existing = prefs.getStringList(key) ?? [];
+      existing.add(jsonEncode(draft));
+      final trimmed = existing.length > 20
+          ? existing.sublist(existing.length - 20)
+          : existing;
+      await prefs.setStringList(key, trimmed);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Draft saved! ✅'),
+          backgroundColor: Color(0xFF0095F6),
+        ));
+        final navigator = Navigator.of(context);
+        navigator.popUntil((route) => route.isFirst);
+        navigator.push(MaterialPageRoute(
+          builder: (_) => const MyProfileScreen(),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Draft save failed: $e'),
+          backgroundColor: Colors.red,
+        ));
+      }
+    }
   }
 
   @override

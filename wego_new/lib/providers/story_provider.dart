@@ -54,12 +54,42 @@ class StoryProvider with ChangeNotifier {
         _userStories = [];
         notifyListeners();
       } else {
+        _cleanupOldStories(user.uid);
         _startListening(user.uid);
       }
     });
 
     final cur = FirebaseAuth.instance.currentUser;
-    if (cur != null) _startListening(cur.uid);
+    if (cur != null) {
+      _cleanupOldStories(cur.uid);
+      _startListening(cur.uid);
+    }
+  }
+
+  /// 24 ghante se purani apni stories Firestore se delete karo.
+  /// (Security rules sirf author ko apni docs delete karne deti hain.)
+  Future<void> _cleanupOldStories(String uid) async {
+    try {
+      final cutoff = Timestamp.fromDate(
+        DateTime.now().subtract(const Duration(hours: 24)),
+      );
+      final stale = await FirebaseFirestore.instance
+          .collection('stories')
+          .where('userId', isEqualTo: uid)
+          .where('createdAt', isLessThanOrEqualTo: cutoff)
+          .get();
+
+      if (stale.docs.isEmpty) return;
+
+      final batch = FirebaseFirestore.instance.batch();
+      for (final doc in stale.docs) {
+        batch.delete(doc.reference);
+      }
+      await batch.commit();
+      debugPrint('Cleaned ${stale.docs.length} expired stories for $uid');
+    } catch (e) {
+      debugPrint('Story cleanup error: $e');
+    }
   }
 
   /// Unwatched pehle, phir watched

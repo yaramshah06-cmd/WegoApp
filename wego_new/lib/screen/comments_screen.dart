@@ -1,12 +1,14 @@
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:timeago/timeago.dart' as timeago;
-import 'package:wego_marriage/services/local_storage_service.dart';
 import 'package:wego_marriage/providers/settings_provider.dart';
 import 'package:wego_marriage/screen/user_profile_screen.dart';
-import 'package:wego_marriage/screen/chat_screen.dart';
 import 'package:wego_marriage/screen/xp_service.dart';
+import 'package:wego_marriage/services/notification_service.dart';
 import 'app_localizations.dart';
 import 'app_translations.dart';
 
@@ -30,15 +32,31 @@ class CommentsScreen extends StatefulWidget {
 
 class _CommentsScreenState extends State<CommentsScreen> {
   final TextEditingController _commentController = TextEditingController();
-  final LocalStorageService _storage = LocalStorageService();
   final ScrollController _scrollController = ScrollController();
-  List<Comment> _comments = [];
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  @override
-  void initState() {
-    super.initState();
-    _loadComments();
-  }
+  // Translation state
+  final Map<String, String> _translations = {};
+  final Set<String> _showOriginal = {};
+
+  // ── FIX 1: Optimistic overrides — ONLY store pending state here.
+  // Key: commentId → true means "user just liked", false means "user just unliked".
+  // These are cleared as soon as Firestore stream confirms the change.
+  final Map<String, bool> _likedOverride = {};
+  final Map<String, bool> _dislikedOverride = {};
+
+  // ── FIX 2: Cache the last known Firestore docs so StreamBuilder
+  // does NOT cause a full list rebuild on every optimistic setState.
+  // We pass this to itemBuilder and only update it inside the stream.
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> _cachedDocs = [];
+
+  String? get _uid => FirebaseAuth.instance.currentUser?.uid;
+
+  CollectionReference<Map<String, dynamic>> get _commentsRef =>
+      _db.collection('posts').doc(widget.postId).collection('comments');
+
+  DocumentReference<Map<String, dynamic>> get _postRef =>
+      _db.collection('posts').doc(widget.postId);
 
   @override
   void dispose() {
@@ -47,137 +65,264 @@ class _CommentsScreenState extends State<CommentsScreen> {
     super.dispose();
   }
 
-  void _loadComments() {
-    setState(() {
-      _comments = _storage.getComments(widget.postId);
-      if (_comments.isEmpty) {
-        _comments = _getDummyComments();
-        for (var comment in _comments) {
-          _storage.addComment(widget.postId, comment);
+  Future<void> _postComment() async {
+    final text = _commentController.text.trim();
+    final uid = _uid;
+    if (text.isEmpty || uid == null) return;
+
+    _commentController.clear();
+    FocusScope.of(context).unfocus();
+    setState(() {});
+
+    final data = {
+      'authorUid': uid,
+      'username': widget.currentUsername,
+      'avatarUrl': widget.currentUserAvatar,
+      'text': text,
+      'timestamp': FieldValue.serverTimestamp(),
+      'likedBy': <String>[],
+      'dislikedBy': <String>[],
+      'parentId': null,
+    };
+
+    final newDoc = await _commentsRef.add(data);
+    await _postRef.set(
+      {'commentsCount': FieldValue.increment(1)},
+      SetOptions(merge: true),
+    );
+    await XPService.addXP(uid, XPAction.commentKarna);
+
+    try {
+      final postSnap = await _postRef.get();
+      final postData = postSnap.data();
+      if (postData != null) {
+        final ownerUid = (postData['authorid'] ?? '') as String;
+        final thumb = (postData['imageUrl'] ?? '') as String;
+        if (ownerUid.isNotEmpty) {
+          NotificationService.notifyComment(
+            postOwnerUid: ownerUid,
+            postId: widget.postId,
+            postThumbUrl: thumb,
+            commentId: newDoc.id,
+            commentText: text,
+          );
         }
       }
-    });
+    } catch (_) {}
+
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    }
   }
 
-  List<Comment> _getDummyComments() {
-    return [
-      Comment(
-        id: 'comment_1',
-        username: 'sarah_smith',
-        avatarUrl: 'https://i.pravatar.cc/150?img=1',
-        text: 'This is absolutely amazing! 😍 Love the vibes',
-        timestamp: DateTime.now().subtract(const Duration(minutes: 5)),
-        likes: 24,
-        dislikes: 0,
-      ),
-      Comment(
-        id: 'comment_2',
-        username: 'mike_brown',
-        avatarUrl: 'https://i.pravatar.cc/150?img=3',
-        text: 'Beautiful shot! Where was this taken?',
-        timestamp: DateTime.now().subtract(const Duration(hours: 1)),
-        likes: 12,
-        dislikes: 0,
-        replies: [
-          Comment(
-            id: 'reply_1',
-            username: widget.postUsername,
-            avatarUrl: widget.currentUserAvatar,
-            text: 'Thank you! This was taken in Bali 🌴',
-            timestamp: DateTime.now().subtract(const Duration(minutes: 45)),
-            likes: 8,
-            dislikes: 0,
-          ),
-        ],
-      ),
-      Comment(
-        id: 'comment_3',
-        username: 'emma_wilson',
-        avatarUrl: 'https://i.pravatar.cc/150?img=5',
-        text: 'Wow, stunning! ✨',
-        timestamp: DateTime.now().subtract(const Duration(hours: 2)),
-        likes: 6,
-        dislikes: 0,
-      ),
-    ];
-  }
+  Future<void> _postReply(String parentId, String text) async {
+    final uid = _uid;
+    if (text.trim().isEmpty || uid == null) return;
 
-  void _postComment() async {
-    final text = _commentController.text.trim();
-    if (text.isEmpty) return;
+    final data = {
+      'authorUid': uid,
+      'username': widget.currentUsername,
+      'avatarUrl': widget.currentUserAvatar,
+      'text': text.trim(),
+      'timestamp': FieldValue.serverTimestamp(),
+      'likedBy': <String>[],
+      'dislikedBy': <String>[],
+      'parentId': parentId,
+    };
 
-    final newComment = Comment(
-      id: 'comment_${DateTime.now().millisecondsSinceEpoch}',
-      username: widget.currentUsername,
-      avatarUrl: widget.currentUserAvatar,
-      text: text,
-      timestamp: DateTime.now(),
-      likes: 0,
-      dislikes: 0,
+    final newDoc = await _commentsRef.add(data);
+    await _postRef.set(
+      {'commentsCount': FieldValue.increment(1)},
+      SetOptions(merge: true),
     );
+    await XPService.addXP(uid, XPAction.commentKarna);
 
-    await _storage.addComment(widget.postId, newComment);
+    try {
+      final parentSnap = await _commentsRef.doc(parentId).get();
+      final parentData = parentSnap.data();
+      if (parentData != null) {
+        final parentAuthorUid = (parentData['authorUid'] ?? '') as String;
+        if (parentAuthorUid.isNotEmpty) {
+          String thumb = '';
+          try {
+            final postSnap = await _postRef.get();
+            thumb = (postSnap.data()?['imageUrl'] ?? '') as String;
+          } catch (_) {}
+          NotificationService.notifyReply(
+            commentOwnerUid: parentAuthorUid,
+            postId: widget.postId,
+            postThumbUrl: thumb,
+            commentId: newDoc.id,
+            replyText: text.trim(),
+          );
+        }
+      }
+    } catch (_) {}
+  }
 
-    // 🎁 +30 XP for posting a comment
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid != null) {
-      await XPService.addXP(uid, XPAction.commentKarna);
+  // ── FIX 3: Pass RAW Firestore lists here, NOT the optimistically-modified ones.
+  // Previously the caller was passing the already-overridden lists, which caused
+  // FieldValue.arrayRemove/arrayUnion to operate on wrong data.
+  Future<void> _toggleLikeComment(
+      String commentId,
+      List<String> rawLikedBy,   // straight from Firestore doc
+      List<String> rawDislikedBy, // straight from Firestore doc
+      ) async {
+    final uid = _uid;
+    if (uid == null) return;
+
+    final isLiked = rawLikedBy.contains(uid);
+    final isDisliked = rawDislikedBy.contains(uid);
+    final willBeLiked = !isLiked;
+
+    // Optimistic UI update
+    setState(() {
+      _likedOverride[commentId] = willBeLiked;
+      // If user is liking and was previously disliking, remove dislike visually
+      if (willBeLiked && isDisliked) _dislikedOverride[commentId] = false;
+    });
+
+    final updates = <String, dynamic>{};
+    updates['likedBy'] = isLiked
+        ? FieldValue.arrayRemove([uid])
+        : FieldValue.arrayUnion([uid]);
+    if (!isLiked && isDisliked) {
+      updates['dislikedBy'] = FieldValue.arrayRemove([uid]);
     }
 
+    try {
+      await _commentsRef.doc(commentId).update(updates);
+      if (willBeLiked) {
+        unawaited(_notifyCommentAuthor(commentId, isLike: true));
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _likedOverride.remove(commentId);
+          _dislikedOverride.remove(commentId);
+        });
+      }
+      debugPrint('comment like toggle failed: $e');
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Like error: $e')));
+    }
+  }
+
+  Future<void> _toggleDislikeComment(
+      String commentId,
+      List<String> rawLikedBy,   // straight from Firestore doc
+      List<String> rawDislikedBy, // straight from Firestore doc
+      ) async {
+    final uid = _uid;
+    if (uid == null) return;
+
+    final isLiked = rawLikedBy.contains(uid);
+    final isDisliked = rawDislikedBy.contains(uid);
+    final willBeDisliked = !isDisliked;
+
     setState(() {
-      _comments.insert(0, newComment);
-      _commentController.clear();
+      _dislikedOverride[commentId] = willBeDisliked;
+      if (willBeDisliked && isLiked) _likedOverride[commentId] = false;
     });
 
-    _scrollController.animateTo(
-      0,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeOut,
+    final updates = <String, dynamic>{};
+    updates['dislikedBy'] = isDisliked
+        ? FieldValue.arrayRemove([uid])
+        : FieldValue.arrayUnion([uid]);
+    if (!isDisliked && isLiked) {
+      updates['likedBy'] = FieldValue.arrayRemove([uid]);
+    }
+
+    try {
+      await _commentsRef.doc(commentId).update(updates);
+      if (willBeDisliked) {
+        unawaited(_notifyCommentAuthor(commentId, isLike: false));
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _likedOverride.remove(commentId);
+          _dislikedOverride.remove(commentId);
+        });
+      }
+      debugPrint('comment dislike toggle failed: $e');
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Dislike error: $e')));
+    }
+  }
+
+  Future<void> _notifyCommentAuthor(String commentId,
+      {required bool isLike}) async {
+    try {
+      final snap = await _commentsRef.doc(commentId).get();
+      final data = snap.data();
+      if (data == null) return;
+      final authorUid = (data['authorUid'] ?? '') as String;
+      if (authorUid.isEmpty) return;
+      // Apne comment par like/dislike ka notification nahi bhejna
+      if (authorUid == _uid) return;
+      final commentText = (data['text'] ?? '') as String;
+      String thumb = '';
+      try {
+        final postSnap = await _postRef.get();
+        thumb = (postSnap.data()?['imageUrl'] ?? '') as String;
+      } catch (_) {}
+
+      if (isLike) {
+        NotificationService.notifyCommentLike(
+          commentOwnerUid: authorUid,
+          postId: widget.postId,
+          postThumbUrl: thumb,
+          commentId: commentId,
+          commentText: commentText,
+        );
+      } else {
+        NotificationService.notifyCommentDislike(
+          commentOwnerUid: authorUid,
+          postId: widget.postId,
+          postThumbUrl: thumb,
+          commentId: commentId,
+          commentText: commentText,
+        );
+      }
+    } catch (e) {
+      debugPrint('notify comment author failed: $e');
+    }
+  }
+
+  Future<void> _deleteComment(String commentId, {bool isReply = false}) async {
+    if (!isReply) {
+      final children =
+      await _commentsRef.where('parentId', isEqualTo: commentId).get();
+      for (final c in children.docs) {
+        await c.reference.delete();
+      }
+      await _postRef.set(
+        {'commentsCount': FieldValue.increment(-(children.docs.length + 1))},
+        SetOptions(merge: true),
+      );
+    } else {
+      await _postRef.set(
+        {'commentsCount': FieldValue.increment(-1)},
+        SetOptions(merge: true),
+      );
+    }
+    await _commentsRef.doc(commentId).delete();
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(context.tr('comment_deleted'))),
     );
   }
 
-  void _toggleLikeComment(Comment comment) async {
-    final isLiked = _storage.isCommentLiked(comment.id);
-    final isDisliked = _storage.isCommentDisliked(comment.id);
-
-    await _storage.toggleCommentLike(comment.id, !isLiked);
-
-    setState(() {
-      if (!isLiked) {
-        comment.likes++;
-        if (isDisliked) comment.dislikes--;
-      } else {
-        comment.likes--;
-      }
-    });
-
-    await _storage.addComment(widget.postId, comment);
-  }
-
-  void _toggleDislikeComment(Comment comment) async {
-    final isLiked = _storage.isCommentLiked(comment.id);
-    final isDisliked = _storage.isCommentDisliked(comment.id);
-
-    await _storage.toggleCommentDislike(comment.id, !isDisliked);
-
-    setState(() {
-      if (!isDisliked) {
-        comment.dislikes++;
-        if (isLiked) comment.likes--;
-      } else {
-        comment.dislikes--;
-      }
-    });
-
-    await _storage.addComment(widget.postId, comment);
-  }
-
-  void _navigateToProfile(String username, String avatarUrl) {
+  void _navigateToProfile(String userId, String username, String avatarUrl) {
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => UserProfileScreen(
-          userId: '',
+          userId: userId,
           username: username,
           avatarUrl: avatarUrl,
         ),
@@ -185,19 +330,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
     );
   }
 
-  void _navigateToChat(String username, String avatarUrl) async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => ChatScreen(
-          username: username,
-          avatarUrl: avatarUrl,
-        ),
-      ),
-    );
-  }
-
-  void _showReplyDialog(Comment parentComment) {
+  void _showReplyDialog(String parentId, String parentUsername) {
     final replyController = TextEditingController();
 
     showModalBottomSheet(
@@ -219,7 +352,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${context.tr('replying_to')} ${parentComment.username}', // ✅
+                  '${context.tr('replying_to')} $parentUsername',
                   style: const TextStyle(
                     fontWeight: FontWeight.w600,
                     fontSize: 16,
@@ -229,7 +362,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
                 TextField(
                   controller: replyController,
                   decoration: InputDecoration(
-                    hintText: context.tr('write_reply'), // ✅
+                    hintText: context.tr('write_reply'),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
@@ -245,25 +378,15 @@ class _CommentsScreenState extends State<CommentsScreen> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: () async {
+                    onPressed: () {
                       final text = replyController.text.trim();
                       if (text.isNotEmpty) {
-                        final reply = Comment(
-                          id: 'reply_${DateTime.now().millisecondsSinceEpoch}',
-                          username: widget.currentUsername,
-                          avatarUrl: widget.currentUserAvatar,
-                          text: text,
-                          timestamp: DateTime.now(),
-                          likes: 0,
-                          dislikes: 0,
-                        );
-
-                        parentComment.replies.add(reply);
-                        await _storage.addComment(widget.postId, parentComment);
-
-                        if (!context.mounted) return;
+                        // Pehle sheet band karo — await karne se sheet
+                        // Firestore write complete hone tak ruki rehti thi.
+                        FocusScope.of(context).unfocus();
                         Navigator.pop(context);
-                        setState(() {});
+                        // Sheet close hone ke baad background mein reply post karo.
+                        unawaited(_postReply(parentId, text));
                       }
                     },
                     style: ElevatedButton.styleFrom(
@@ -273,7 +396,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
                       ),
                       padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
-                    child: Text(context.tr('reply')), // ✅
+                    child: Text(context.tr('reply')),
                   ),
                 ),
               ],
@@ -284,35 +407,37 @@ class _CommentsScreenState extends State<CommentsScreen> {
     );
   }
 
-  // ✅ AppTranslations.translate() use karo — koi hardcoded map nahi
-  void _translateComment(Comment comment) {
+  void _translateComment(String id, String original) {
     final settings = context.read<SettingsProvider>();
     final targetLanguage = settings.preferredLanguage;
+    final langCode = _getLanguageCode(targetLanguage);
+    final translated = AppTranslations.translate(original, langCode);
 
-    if (comment.isTranslated) {
-      setState(() {
-        comment.isTranslated = false;
-        comment.translatedText = null;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.tr('showing_original'))), // ✅
-      );
-    } else {
-      final langCode = _getLanguageCode(targetLanguage);
-      // ✅ AppTranslations.translate() — same system jo poori app use karti hai
-      final translated = AppTranslations.translate(comment.text, langCode);
+    setState(() {
+      if (_showOriginal.contains(id)) {
+        _showOriginal.remove(id);
+      } else if (_translations.containsKey(id)) {
+        _showOriginal.add(id);
+      } else {
+        _translations[id] = translated;
+      }
+    });
 
-      setState(() {
-        comment.isTranslated = true;
-        comment.translatedText = translated;
-      });
+    if (!_showOriginal.contains(id)) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('${context.tr('translated_to')} $targetLanguage'), // ✅
+          content: Text('${context.tr('translated_to')} $targetLanguage'),
         ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.tr('showing_original'))),
       );
     }
   }
+
+  bool _isTranslatedShown(String id) =>
+      _translations.containsKey(id) && !_showOriginal.contains(id);
 
   String _getLanguageCode(String languageName) {
     const Map<String, String> codes = {
@@ -329,19 +454,6 @@ class _CommentsScreenState extends State<CommentsScreen> {
       'German': 'de',
     };
     return codes[languageName] ?? 'en';
-  }
-
-  void _deleteComment(Comment comment) async {
-    await _storage.deleteComment(widget.postId, comment.id);
-    if (!mounted) return;
-
-    setState(() {
-      _comments.removeWhere((c) => c.id == comment.id);
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(context.tr('comment_deleted'))), // ✅
-    );
   }
 
   @override
@@ -362,7 +474,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
-          context.tr('comments'), // ✅
+          context.tr('comments'),
           style: TextStyle(
             color: isDark ? Colors.white : Colors.black,
             fontWeight: FontWeight.w600,
@@ -373,14 +485,66 @@ class _CommentsScreenState extends State<CommentsScreen> {
       body: Column(
         children: [
           Expanded(
-            child: _comments.isEmpty
-                ? _buildEmptyState(isDark)
-                : ListView.builder(
-              controller: _scrollController,
-              itemCount: _comments.length,
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              itemBuilder: (context, index) {
-                return _buildCommentItem(_comments[index], isDark);
+            child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: _commentsRef
+                  .orderBy('timestamp', descending: true)
+                  .snapshots(),
+              builder: (context, snap) {
+                if (snap.connectionState == ConnectionState.waiting &&
+                    _cachedDocs.isEmpty) {
+                  // ── FIX 4: Only show loader on FIRST load.
+                  // Subsequent stream updates (e.g. after like) must NOT
+                  // show a spinner — that's what caused the list to vanish.
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                if (snap.hasData) {
+                  // Update cache — but do NOT call setState here.
+                  // StreamBuilder already calls build when new data arrives.
+                  _cachedDocs = snap.data!.docs;
+                }
+
+                if (_cachedDocs.isEmpty) {
+                  return _buildEmptyState(isDark);
+                }
+
+                final tops = _cachedDocs
+                    .where((d) => (d.data()['parentId']) == null)
+                    .toList();
+
+                final repliesByParent =
+                <String, List<QueryDocumentSnapshot<Map<String, dynamic>>>>{};
+                for (final d in _cachedDocs) {
+                  final p = d.data()['parentId'];
+                  if (p is String && p.isNotEmpty) {
+                    repliesByParent.putIfAbsent(p, () => []).add(d);
+                  }
+                }
+                for (final list in repliesByParent.values) {
+                  list.sort((a, b) {
+                    final ta = a.data()['timestamp'];
+                    final tb = b.data()['timestamp'];
+                    final da =
+                    ta is Timestamp ? ta.toDate() : DateTime.now();
+                    final db =
+                    tb is Timestamp ? tb.toDate() : DateTime.now();
+                    return da.compareTo(db);
+                  });
+                }
+
+                return ListView.builder(
+                  controller: _scrollController,
+                  // ── FIX 5: Keep alive so scroll position is preserved
+                  // across optimistic setState calls.
+                  key: const PageStorageKey('comments_list'),
+                  itemCount: tops.length,
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  itemBuilder: (context, index) {
+                    final doc = tops[index];
+                    final replies = repliesByParent[doc.id] ?? const [];
+                    return _buildCommentItem(doc, replies, isDark);
+                  },
+                );
               },
             ),
           ),
@@ -402,7 +566,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
           ),
           const SizedBox(height: 16),
           Text(
-            context.tr('no_comments_yet'), // ✅
+            context.tr('no_comments_yet'),
             style: TextStyle(
               color: isDark ? Colors.grey[400] : Colors.grey[600],
               fontSize: 16,
@@ -410,7 +574,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            context.tr('be_first_comment'), // ✅
+            context.tr('be_first_comment'),
             style: TextStyle(
               color: isDark ? Colors.grey[600] : Colors.grey[400],
               fontSize: 14,
@@ -421,9 +585,63 @@ class _CommentsScreenState extends State<CommentsScreen> {
     );
   }
 
-  Widget _buildCommentItem(Comment comment, bool isDark) {
-    final isLiked = _storage.isCommentLiked(comment.id);
-    final isDisliked = _storage.isCommentDisliked(comment.id);
+  Widget _buildCommentItem(
+      QueryDocumentSnapshot<Map<String, dynamic>> doc,
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> replies,
+      bool isDark,
+      ) {
+    final data = doc.data();
+    final id = doc.id;
+    final username = (data['username'] ?? '').toString();
+    final avatarUrl = (data['avatarUrl'] ?? '').toString();
+    final text = (data['text'] ?? '').toString();
+    final authorUid = (data['authorUid'] ?? '').toString();
+    final ts = data['timestamp'];
+    final time = ts is Timestamp ? ts.toDate() : DateTime.now();
+
+    // ── FIX 6: Always keep RAW Firestore lists separate.
+    // These are passed to toggle functions so Firestore writes are correct.
+    final rawLikedBy = List<String>.from(data['likedBy'] ?? const []);
+    final rawDislikedBy = List<String>.from(data['dislikedBy'] ?? const []);
+
+    // Apply optimistic overrides only for UI display
+    final uidNow = _uid;
+    final List<String> displayLikedBy = List<String>.from(rawLikedBy);
+    final List<String> displayDislikedBy = List<String>.from(rawDislikedBy);
+
+    if (uidNow != null) {
+      final likeOv = _likedOverride[id];
+      if (likeOv == true && !displayLikedBy.contains(uidNow)) {
+        displayLikedBy.add(uidNow);
+      }
+      if (likeOv == false) displayLikedBy.remove(uidNow);
+
+      final dislikeOv = _dislikedOverride[id];
+      if (dislikeOv == true && !displayDislikedBy.contains(uidNow)) {
+        displayDislikedBy.add(uidNow);
+      }
+      if (dislikeOv == false) displayDislikedBy.remove(uidNow);
+
+      // Clear override once Firestore truth matches — next frame to avoid
+      // calling setState during build.
+      if (likeOv != null && likeOv == rawLikedBy.contains(uidNow)) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() => _likedOverride.remove(id));
+        });
+      }
+      if (dislikeOv != null &&
+          dislikeOv == rawDislikedBy.contains(uidNow)) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() => _dislikedOverride.remove(id));
+        });
+      }
+    }
+
+    final isLiked = uidNow != null && displayLikedBy.contains(uidNow);
+    final isDisliked = uidNow != null && displayDislikedBy.contains(uidNow);
+
+    final showTranslated = _isTranslatedShown(id);
+    final shownText = showTranslated ? (_translations[id] ?? text) : text;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -435,10 +653,15 @@ class _CommentsScreenState extends State<CommentsScreen> {
             children: [
               GestureDetector(
                 onTap: () =>
-                    _navigateToProfile(comment.username, comment.avatarUrl),
+                    _navigateToProfile(authorUid, username, avatarUrl),
                 child: CircleAvatar(
                   radius: 18,
-                  backgroundImage: NetworkImage(comment.avatarUrl),
+                  backgroundImage: avatarUrl.startsWith('http')
+                      ? NetworkImage(avatarUrl)
+                      : null,
+                  child: avatarUrl.startsWith('http')
+                      ? null
+                      : const Icon(Icons.person, size: 18),
                 ),
               ),
               const SizedBox(width: 12),
@@ -452,9 +675,9 @@ class _CommentsScreenState extends State<CommentsScreen> {
                           WidgetSpan(
                             child: GestureDetector(
                               onTap: () => _navigateToProfile(
-                                  comment.username, comment.avatarUrl),
+                                  authorUid, username, avatarUrl),
                               child: Text(
-                                comment.username,
+                                username,
                                 style: TextStyle(
                                   fontWeight: FontWeight.w600,
                                   color:
@@ -465,16 +688,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
                             ),
                           ),
                           TextSpan(
-                            text: ' ',
-                            style: TextStyle(
-                              color: isDark ? Colors.white : Colors.black,
-                            ),
-                          ),
-                          TextSpan(
-                            text: comment.isTranslated &&
-                                comment.translatedText != null
-                                ? comment.translatedText
-                                : comment.text,
+                            text: ' $shownText',
                             style: TextStyle(
                               color: isDark ? Colors.white : Colors.black,
                               fontSize: 14,
@@ -484,50 +698,42 @@ class _CommentsScreenState extends State<CommentsScreen> {
                       ),
                     ),
                     const SizedBox(height: 6),
-                    Row(
+                    Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 12,
                       children: [
                         Text(
-                          timeago.format(comment.timestamp),
+                          timeago.format(time),
                           style: TextStyle(
                             color: Colors.grey[500],
                             fontSize: 12,
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        GestureDetector(
-                          onTap: () => _navigateToChat(
-                              comment.username, comment.avatarUrl),
-                          child: Icon(
-                            Icons.message_outlined,
-                            size: 14,
-                            color: Colors.grey[600],
-                          ),
-                        ),
-                        const SizedBox(width: 12),
+                        // ── FIX 7: Pass RAW lists to toggle functions
                         _buildActionButton(
                           icon: isLiked
                               ? Icons.favorite
                               : Icons.favorite_border,
-                          count: comment.likes,
-                          onTap: () => _toggleLikeComment(comment),
+                          count: displayLikedBy.length,
+                          onTap: () => _toggleLikeComment(
+                              id, rawLikedBy, rawDislikedBy),
                           isActive: isLiked,
                           activeColor: Colors.red,
                         ),
-                        const SizedBox(width: 12),
                         _buildActionButton(
                           icon: isDisliked
                               ? Icons.thumb_down
                               : Icons.thumb_down_alt_outlined,
-                          count: comment.dislikes,
-                          onTap: () => _toggleDislikeComment(comment),
+                          count: displayDislikedBy.length,
+                          onTap: () => _toggleDislikeComment(
+                              id, rawLikedBy, rawDislikedBy),
                           isActive: isDisliked,
                           activeColor: Colors.blue,
                         ),
-                        const SizedBox(width: 16),
                         GestureDetector(
-                          onTap: () => _showReplyDialog(comment),
+                          onTap: () => _showReplyDialog(id, username),
                           child: Text(
-                            context.tr('reply'), // ✅
+                            context.tr('reply'),
                             style: TextStyle(
                               color: Colors.grey[600],
                               fontSize: 12,
@@ -535,14 +741,13 @@ class _CommentsScreenState extends State<CommentsScreen> {
                             ),
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        if (comment.text.length > 10)
+                        if (text.length > 10)
                           GestureDetector(
-                            onTap: () => _translateComment(comment),
+                            onTap: () => _translateComment(id, text),
                             child: Text(
-                              comment.isTranslated
-                                  ? context.tr('see_original')  // ✅
-                                  : context.tr('translate'),    // ✅
+                              showTranslated
+                                  ? context.tr('see_original')
+                                  : context.tr('translate'),
                               style: TextStyle(
                                 color: Colors.grey[600],
                                 fontSize: 12,
@@ -550,20 +755,18 @@ class _CommentsScreenState extends State<CommentsScreen> {
                               ),
                             ),
                           ),
-                        if (comment.username == widget.currentUsername)
+                        if (authorUid == _uid)
                           PopupMenuButton<String>(
                             icon: Icon(Icons.more_horiz,
                                 size: 16, color: Colors.grey[600]),
                             itemBuilder: (context) => [
                               PopupMenuItem(
                                 value: 'delete',
-                                child: Text(context.tr('delete')), // ✅
+                                child: Text(context.tr('delete')),
                               ),
                             ],
                             onSelected: (value) {
-                              if (value == 'delete') {
-                                _deleteComment(comment);
-                              }
+                              if (value == 'delete') _deleteComment(id);
                             },
                           ),
                       ],
@@ -575,13 +778,12 @@ class _CommentsScreenState extends State<CommentsScreen> {
           ),
         ),
 
-        if (comment.replies.isNotEmpty)
+        if (replies.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(left: 52),
             child: Column(
-              children: comment.replies
-                  .map((reply) => _buildReplyItem(reply, isDark))
-                  .toList(),
+              children:
+              replies.map((r) => _buildReplyItem(r, isDark)).toList(),
             ),
           ),
 
@@ -590,8 +792,38 @@ class _CommentsScreenState extends State<CommentsScreen> {
     );
   }
 
-  Widget _buildReplyItem(Comment reply, bool isDark) {
-    final isLiked = _storage.isCommentLiked(reply.id);
+  Widget _buildReplyItem(
+      QueryDocumentSnapshot<Map<String, dynamic>> doc, bool isDark) {
+    final data = doc.data();
+    final id = doc.id;
+    final username = (data['username'] ?? '').toString();
+    final avatarUrl = (data['avatarUrl'] ?? '').toString();
+    final text = (data['text'] ?? '').toString();
+    final authorUid = (data['authorUid'] ?? '').toString();
+    final ts = data['timestamp'];
+    final time = ts is Timestamp ? ts.toDate() : DateTime.now();
+
+    // RAW lists for Firestore writes
+    final rawLikedBy = List<String>.from(data['likedBy'] ?? const []);
+    final rawDislikedBy = List<String>.from(data['dislikedBy'] ?? const []);
+
+    // Display lists with optimistic override
+    final uidNow = _uid;
+    final List<String> displayLikedBy = List<String>.from(rawLikedBy);
+    if (uidNow != null) {
+      final likeOv = _likedOverride[id];
+      if (likeOv == true && !displayLikedBy.contains(uidNow)) {
+        displayLikedBy.add(uidNow);
+      }
+      if (likeOv == false) displayLikedBy.remove(uidNow);
+      if (likeOv != null && likeOv == rawLikedBy.contains(uidNow)) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() => _likedOverride.remove(id));
+        });
+      }
+    }
+
+    final isLiked = uidNow != null && displayLikedBy.contains(uidNow);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -599,11 +831,15 @@ class _CommentsScreenState extends State<CommentsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           GestureDetector(
-            onTap: () =>
-                _navigateToProfile(reply.username, reply.avatarUrl),
+            onTap: () => _navigateToProfile(authorUid, username, avatarUrl),
             child: CircleAvatar(
               radius: 14,
-              backgroundImage: NetworkImage(reply.avatarUrl),
+              backgroundImage: avatarUrl.startsWith('http')
+                  ? NetworkImage(avatarUrl)
+                  : null,
+              child: avatarUrl.startsWith('http')
+                  ? null
+                  : const Icon(Icons.person, size: 14),
             ),
           ),
           const SizedBox(width: 10),
@@ -617,9 +853,9 @@ class _CommentsScreenState extends State<CommentsScreen> {
                       WidgetSpan(
                         child: GestureDetector(
                           onTap: () => _navigateToProfile(
-                              reply.username, reply.avatarUrl),
+                              authorUid, username, avatarUrl),
                           child: Text(
-                            reply.username,
+                            username,
                             style: TextStyle(
                               fontWeight: FontWeight.w600,
                               color: isDark ? Colors.white : Colors.black,
@@ -629,7 +865,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
                         ),
                       ),
                       TextSpan(
-                        text: ' ${reply.text}',
+                        text: ' $text',
                         style: TextStyle(
                           color: isDark ? Colors.white : Colors.black,
                           fontSize: 13,
@@ -639,24 +875,38 @@ class _CommentsScreenState extends State<CommentsScreen> {
                   ),
                 ),
                 const SizedBox(height: 4),
-                Row(
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 12,
                   children: [
                     Text(
-                      timeago.format(reply.timestamp),
+                      timeago.format(time),
                       style: TextStyle(
-                        color: Colors.grey[500],
-                        fontSize: 11,
-                      ),
+                          color: Colors.grey[500], fontSize: 11),
                     ),
-                    const SizedBox(width: 12),
+                    // Pass RAW lists to toggle
                     _buildActionButton(
-                      icon: isLiked ? Icons.favorite : Icons.favorite_border,
-                      count: reply.likes,
-                      onTap: () => _toggleLikeComment(reply),
+                      icon:
+                      isLiked ? Icons.favorite : Icons.favorite_border,
+                      count: displayLikedBy.length,
+                      onTap: () => _toggleLikeComment(
+                          id, rawLikedBy, rawDislikedBy),
                       isActive: isLiked,
                       activeColor: Colors.red,
                       isSmall: true,
                     ),
+                    if (authorUid == _uid)
+                      GestureDetector(
+                        onTap: () => _deleteComment(id, isReply: true),
+                        child: Text(
+                          context.tr('delete'),
+                          style: TextStyle(
+                            color: Colors.red[300],
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ],
@@ -678,6 +928,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
     return GestureDetector(
       onTap: onTap,
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
             icon,
@@ -716,35 +967,38 @@ class _CommentsScreenState extends State<CommentsScreen> {
           children: [
             CircleAvatar(
               radius: 18,
-              backgroundImage: NetworkImage(widget.currentUserAvatar),
+              backgroundImage: widget.currentUserAvatar.startsWith('http')
+                  ? NetworkImage(widget.currentUserAvatar)
+                  : null,
+              child: widget.currentUserAvatar.startsWith('http')
+                  ? null
+                  : const Icon(Icons.person, size: 18),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: TextField(
                 controller: _commentController,
                 decoration: InputDecoration(
-                  hintText: context.tr('add_comment'), // ✅
-                  hintStyle: TextStyle(
-                    color: Colors.grey[500],
-                  ),
+                  hintText: context.tr('add_comment'),
+                  hintStyle: TextStyle(color: Colors.grey[500]),
                   border: InputBorder.none,
-                  contentPadding:
-                  const EdgeInsets.symmetric(vertical: 8),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 8),
                 ),
                 style: TextStyle(
                   color: isDark ? Colors.white : Colors.black,
                 ),
                 maxLines: null,
                 textInputAction: TextInputAction.send,
+                onChanged: (_) => setState(() {}),
                 onSubmitted: (_) => _postComment(),
               ),
             ),
             GestureDetector(
               onTap: _postComment,
               child: Text(
-                context.tr('post_comment'), // ✅
+                context.tr('post_comment'),
                 style: TextStyle(
-                  color: _commentController.text.isNotEmpty
+                  color: _commentController.text.trim().isNotEmpty
                       ? const Color(0xFF0095F6)
                       : Colors.grey[400],
                   fontWeight: FontWeight.w600,

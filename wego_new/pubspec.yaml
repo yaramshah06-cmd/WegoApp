@@ -58,6 +58,7 @@ dependencies:
   flutter_sound: ^9.2.13
   flutter_webrtc: ^0.13.0
   url_launcher: ^6.2.5
+  socket_io_client: ^2.0.3+1
 
   # Cloudinary ✅ NEW
   cloudinary_public: ^0.23.0

@@ -3,6 +3,7 @@ import 'package:path_provider/path_provider.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:wego_marriage/screen/create_content_screen.dart';
 
 class LocalStorageService {
@@ -15,6 +16,21 @@ class LocalStorageService {
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
   }
+
+  // ── User-scoped pref keys ──────────────────────────────────────────────
+  // Like/save/dislike caches must not leak across accounts on the same
+  // device. Each key is suffixed with the signed-in uid (or `_anon` for
+  // logged-out reads). Firestore remains the source of truth — this cache
+  // is only a flash before the live snapshot arrives.
+  String get _uidSuffix {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    return (uid == null || uid.isEmpty) ? 'anon' : uid;
+  }
+
+  String get _likedPostsKey => 'liked_posts_$_uidSuffix';
+  String get _savedPostsKey => 'saved_posts_$_uidSuffix';
+  String get _likedCommentsKey => 'liked_comments_$_uidSuffix';
+  String get _dislikedCommentsKey => 'disliked_comments_$_uidSuffix';
 // Chat message save karne ke liye function
   Future<void> saveChatMessage(String username, dynamic message) async {
     // Misal ke taur par agar aap String list save karna chahte hain:
@@ -83,11 +99,11 @@ class LocalStorageService {
     } else {
       likedPosts.remove(postId);
     }
-    await _prefs?.setStringList('liked_posts', likedPosts.toList());
+    await _prefs?.setStringList(_likedPostsKey, likedPosts.toList());
   }
 
   Set<String> getLikedPosts() {
-    return _prefs?.getStringList('liked_posts')?.toSet() ?? {};
+    return _prefs?.getStringList(_likedPostsKey)?.toSet() ?? {};
   }
 
   bool isPostLiked(String postId) {
@@ -102,11 +118,11 @@ class LocalStorageService {
     } else {
       savedPosts.remove(postId);
     }
-    await _prefs?.setStringList('saved_posts', savedPosts.toList());
+    await _prefs?.setStringList(_savedPostsKey, savedPosts.toList());
   }
 
   Set<String> getSavedPosts() {
-    return _prefs?.getStringList('saved_posts')?.toSet() ?? {};
+    return _prefs?.getStringList(_savedPostsKey)?.toSet() ?? {};
   }
 
   bool isPostSaved(String postId) {
@@ -279,11 +295,11 @@ class LocalStorageService {
     } else {
       likedComments.remove(commentId);
     }
-    await _prefs?.setStringList('liked_comments', likedComments.toList());
+    await _prefs?.setStringList(_likedCommentsKey, likedComments.toList());
   }
 
   Set<String> getLikedComments() {
-    return _prefs?.getStringList('liked_comments')?.toSet() ?? {};
+    return _prefs?.getStringList(_likedCommentsKey)?.toSet() ?? {};
   }
 
   bool isCommentLiked(String commentId) {
@@ -298,11 +314,11 @@ class LocalStorageService {
     } else {
       dislikedComments.remove(commentId);
     }
-    await _prefs?.setStringList('disliked_comments', dislikedComments.toList());
+    await _prefs?.setStringList(_dislikedCommentsKey, dislikedComments.toList());
   }
 
   Set<String> getDislikedComments() {
-    return _prefs?.getStringList('disliked_comments')?.toSet() ?? {};
+    return _prefs?.getStringList(_dislikedCommentsKey)?.toSet() ?? {};
   }
 
   bool isCommentDisliked(String commentId) {

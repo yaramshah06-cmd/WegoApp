@@ -19,6 +19,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:wego_marriage/screen/camera_screen.dart';
 import 'package:wego_marriage/screen/romantic_stickers.dart';
 import 'package:wego_marriage/screen/gallery_multi_select_screen.dart';
+import 'package:wego_marriage/screen/post_viewer_screen.dart';
 import 'package:wego_marriage/screen/xp_service.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:record/record.dart';
@@ -35,6 +36,8 @@ const Color kTeal = Color(0xFF2EC4B6);
 enum MsgStatus { sent, delivered, seen }
 
 // ── Message Type ──────────────────────────────────────────────
+// NOTE: Naye types hamesha aakhir mein add karein — backward compat ke liye
+// (purane Firebase messages indices par save hain).
 enum MsgType {
   text,
   image,
@@ -44,7 +47,8 @@ enum MsgType {
   video,
   gif,
   linkPreview,
-  callLog
+  callLog,
+  sharedPost, // Instagram-style shared post preview card
 }
 
 // ── Message Model ─────────────────────────────────────────────
@@ -77,6 +81,12 @@ class ChatMessage {
   final bool? isIncomingCall;
   // Edit support
   final bool isEdited;
+  // Shared post (Instagram-style post share inside chat)
+  final String? sharedPostId;
+  final String? sharedPostAuthor;
+  final String? sharedPostAuthorAvatar;
+  final String? sharedPostThumbUrl;
+  final bool sharedPostIsVideo;
 
   ChatMessage({
     this.text,
@@ -105,6 +115,11 @@ class ChatMessage {
     this.isMissedCall = false,
     this.isIncomingCall = false,
     this.isEdited = false,
+    this.sharedPostId,
+    this.sharedPostAuthor,
+    this.sharedPostAuthorAvatar,
+    this.sharedPostThumbUrl,
+    this.sharedPostIsVideo = false,
   }) : id = id ?? DateTime.now().millisecondsSinceEpoch.toString();
 
   ChatMessage copyWith({
@@ -146,6 +161,11 @@ class ChatMessage {
       isMissedCall: isMissedCall,
       isIncomingCall: isIncomingCall,
       isEdited: isEdited ?? this.isEdited,
+      sharedPostId: sharedPostId,
+      sharedPostAuthor: sharedPostAuthor,
+      sharedPostAuthorAvatar: sharedPostAuthorAvatar,
+      sharedPostThumbUrl: sharedPostThumbUrl,
+      sharedPostIsVideo: sharedPostIsVideo,
     );
   }
 
@@ -177,6 +197,11 @@ class ChatMessage {
       'isMissedCall': isMissedCall,
       'isIncomingCall': isIncomingCall,
       'isEdited': isEdited,
+      'sharedPostId': sharedPostId,
+      'sharedPostAuthor': sharedPostAuthor,
+      'sharedPostAuthorAvatar': sharedPostAuthorAvatar,
+      'sharedPostThumbUrl': sharedPostThumbUrl,
+      'sharedPostIsVideo': sharedPostIsVideo,
     };
   }
 
@@ -231,6 +256,11 @@ class ChatMessage {
       isMissedCall: (map['isMissedCall'] as bool?) ?? false,
       isIncomingCall: (map['isIncomingCall'] as bool?) ?? false,
       isEdited: (map['isEdited'] as bool?) ?? false,
+      sharedPostId: map['sharedPostId'] as String?,
+      sharedPostAuthor: map['sharedPostAuthor'] as String?,
+      sharedPostAuthorAvatar: map['sharedPostAuthorAvatar'] as String?,
+      sharedPostThumbUrl: map['sharedPostThumbUrl'] as String?,
+      sharedPostIsVideo: (map['sharedPostIsVideo'] as bool?) ?? false,
     );
   }
 }
@@ -261,8 +291,21 @@ class FirebaseChatService {
     });
 
     // Last message update karo (chat list ke liye)
+    final typeIdx = (messageData['type'] is int)
+        ? messageData['type'] as int
+        : 0;
+    final mtype = (typeIdx >= 0 && typeIdx < MsgType.values.length)
+        ? MsgType.values[typeIdx]
+        : MsgType.text;
+    // Shared-post messages ke liye friendly preview banao
+    final String lastText = (messageData['text'] as String?)?.trim().isNotEmpty
+            == true
+        ? messageData['text'] as String
+        : (mtype == MsgType.sharedPost
+            ? '📷 Shared a post'
+            : '[${mtype.name}]');
     await _db.ref('chats/$chatRoomId/lastMessage').set({
-      'text': messageData['text'] ?? '[${MsgType.values[messageData['type'] ?? 0].name}]',
+      'text': lastText,
       'time': messageData['time'],
       'senderId': messageData['senderId'],
       'timestamp': ServerValue.timestamp,
@@ -3058,26 +3101,20 @@ class _ChatScreenState extends State<ChatScreen>
           const SizedBox(width: 8),
           _msgCtrl.text.isEmpty && !isEditing
               ? GestureDetector(
-            onLongPressStart: (_) async {
+            behavior: HitTestBehavior.opaque,
+            // ✅ Bilkul "naram" / fauri touch: jaise hi ungli icon par lagi,
+            // onTapDown fire ho jata hai — onTap ke wait (≈100ms) ke baghair.
+            // Recording auto-lock ho jati hai taake user ungli hata sake aur
+            // waveform bar par send (➤) ya cancel (🗑) dabaye.
+            onTapDown: (_) async {
+              if (_isRecording) return; // already chal raha hai
               await VoiceMessageHelper.startRecording();
-              _startRecording(); // UI update ke liye purana bhi chalne do
-            },
-            onLongPressEnd: (_) async {
-              final filePath = await VoiceMessageHelper.stopAndProcess();
-              if (filePath != null) {
-                // Voice changed file Firebase pe upload hoga
-                // Purani _stopRecording ki jagah directly send karo
-                final dur = _recordingDuration;
-                setState(() {
-                  _isRecording = false;
-                  _recordedVoicePath = filePath; // changed file use hogi
-                  _showVoicePreview = true;
-                });
-                _recordingTimer?.cancel();
-              } else {
-                _stopRecording(); // fallback
+              await _startRecording();
+              if (mounted && _isRecording) {
+                setState(() => _voiceLocked = true);
               }
             },
+            // Up-swipe se manual lock bhi support — backwards-compatible.
             onVerticalDragUpdate: (details) {
               if (details.delta.dy < -5 && _isRecording) {
                 setState(() => _voiceLocked = true);
@@ -3600,6 +3637,8 @@ class _MyBubble extends StatelessWidget {
                       if (onSave != null) _SaveButton(onSave: onSave!),
                     ],
                   )
+                else if (message.type == MsgType.sharedPost)
+                  SharedPostCardBubble(message: message)
                 else if (message.type == MsgType.image)
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
@@ -4263,6 +4302,8 @@ class MessageInfoScreen extends StatelessWidget {
         return 'GIF';
       case MsgType.callLog:
         return 'Call';
+      case MsgType.sharedPost:
+        return 'Shared Post';
       default:
         return 'Message';
     }
@@ -4627,5 +4668,182 @@ class _StickerEditorScreenState extends State<StickerEditorScreen> {
                 value: value, min: min, max: max, onChanged: onChanged),
           )),
     ]);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  SharedPostCardBubble — Instagram DM-style preview card for shared posts.
+//  Tap → opens PostViewerScreen with full media + side action column.
+//  Backed by `sharedPostId` + related fields on ChatMessage.
+// ═══════════════════════════════════════════════════════════════════════════
+class SharedPostCardBubble extends StatelessWidget {
+  final ChatMessage message;
+  const SharedPostCardBubble({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    final thumb = message.sharedPostThumbUrl ?? message.imageUrl;
+    final author = message.sharedPostAuthor ?? '';
+    final avatar = message.sharedPostAuthorAvatar ?? '';
+    final isVideo = message.sharedPostIsVideo;
+    final postId = message.sharedPostId;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: postId == null || postId.isEmpty
+            ? null
+            : () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PostViewerScreen(
+                      postId: postId,
+                      fallbackAuthorUsername: author.isEmpty ? null : author,
+                      fallbackAuthorAvatar: avatar.isEmpty ? null : avatar,
+                      fallbackThumbUrl:
+                          (thumb == null || thumb.isEmpty) ? null : thumb,
+                      fallbackIsVideo: isVideo,
+                    ),
+                  ),
+                );
+              },
+        child: Container(
+          width: 240,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.black12, width: 1),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Author row
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 12,
+                      backgroundColor: Colors.grey.shade300,
+                      backgroundImage:
+                          avatar.isNotEmpty ? NetworkImage(avatar) : null,
+                      child: avatar.isEmpty
+                          ? const Icon(Icons.person,
+                              size: 14, color: Colors.white70)
+                          : null,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        author.isEmpty ? 'Post' : '@$author',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                          color: Colors.black87,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: kPurple.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        isVideo ? 'Reel' : 'Post',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: kPurple,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Thumbnail
+              AspectRatio(
+                aspectRatio: 1,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (thumb != null && thumb.isNotEmpty)
+                      Image.network(
+                        thumb,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          color: Colors.grey.shade200,
+                          child: const Icon(Icons.broken_image,
+                              color: Colors.black26, size: 36),
+                        ),
+                      )
+                    else
+                      Container(
+                        color: Colors.grey.shade200,
+                        child: const Icon(Icons.image_outlined,
+                            color: Colors.black26, size: 36),
+                      ),
+                    if (isVideo)
+                      const Center(
+                        child: CircleAvatar(
+                          radius: 22,
+                          backgroundColor: Colors.black54,
+                          child: Icon(Icons.play_arrow,
+                              color: Colors.white, size: 28),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              // Optional user note
+              if ((message.text ?? '').trim().isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
+                  child: Text(
+                    message.text!,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 12, color: Colors.black87, height: 1.3),
+                  ),
+                ),
+              // Time + status footer
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 4, 10, 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Text(
+                      message.time,
+                      style: const TextStyle(
+                          fontSize: 10, color: Colors.black54),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      message.status == MsgStatus.seen
+                          ? Icons.done_all
+                          : message.status == MsgStatus.delivered
+                              ? Icons.done_all
+                              : Icons.check,
+                      size: 12,
+                      color: message.status == MsgStatus.seen
+                          ? Colors.blueAccent
+                          : Colors.black54,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
