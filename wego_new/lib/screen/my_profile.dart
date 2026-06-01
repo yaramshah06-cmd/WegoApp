@@ -1472,7 +1472,7 @@ class _MyProfileTabsSectionState extends State<_MyProfileTabsSection>
           Tab(icon: const Icon(Icons.repeat, size: 20), text: widget.repostsLabel),
         ],
       ),
-      const SizedBox(height: 12),
+    const SizedBox(height: 12),
       activeBody,
     ]);
   }

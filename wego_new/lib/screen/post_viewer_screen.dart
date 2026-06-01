@@ -12,13 +12,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
 import 'package:wego_marriage/screen/comments_screen.dart';
 import 'package:wego_marriage/screen/home_feed_screen.dart' show Post;
 import 'package:wego_marriage/screen/user_profile_screen.dart';
 import 'package:wego_marriage/services/notification_service.dart';
+import 'package:wego_marriage/widgets/post_shared_sheet.dart';
 
 class PostViewerScreen extends StatefulWidget {
   final String postId;
@@ -175,13 +175,10 @@ class _PostViewerScreenState extends State<PostViewerScreen> {
     }
   }
 
-  Future<void> _sharePost(Post post) async {
-    // External share — link + (author handle). Thumbnail nahi attach kar rahe yahan
-    // (viewer ke andar simple text share kafi hai); feed sheet se thumbnail+link wala
-    // detailed flow available hai.
-    final caption =
-        '@${post.username} ki post dekhein:\nhttps://wegomarriage.app/post/${post.id}';
-    await Share.share(caption, subject: 'Wego Post');
+  void _openShareSheet(Post post) {
+    // Shared bottom sheet — feed/fullscreen jaisa hi. Followers, copy link,
+    // WA/FB/More, author-gated download — sab ek hi widget mein.
+    PostSharedSheet.show(context, post: post);
   }
 
   @override
@@ -266,7 +263,7 @@ class _PostViewerScreenState extends State<PostViewerScreen> {
                         ? null
                         : () => _openComments(post),
                     onRepost: () => _toggleRepost(post, isReposted),
-                    onShare: () => _sharePost(post),
+                    onShare: () => _openShareSheet(post),
                   ),
                 ),
 

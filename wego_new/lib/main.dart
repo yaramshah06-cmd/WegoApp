@@ -20,6 +20,12 @@ import 'package:wego_marriage/screen/app_localizations.dart';
 import 'package:wego_marriage/screen/app_translations.dart';
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
+/// App-wide RouteObserver — feed video cards (aur koi bhi auto-playing
+/// media) `RouteAware` mixin use karke push/pop par foran pause/resume
+/// hote hain. Bina iske Navigator.push pe video peeche bajti rehti hai.
+final RouteObserver<ModalRoute<dynamic>> appRouteObserver =
+    RouteObserver<ModalRoute<dynamic>>();
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
@@ -288,6 +294,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           title: 'WeGo Marriage',
           debugShowCheckedModeBanner: false,
           navigatorKey: navigatorKey,
+          // Routes par push/pop notifications — `RouteAware` widgets
+          // (jaise feed video cards) instantly pause/resume kar sakein.
+          navigatorObservers: [appRouteObserver],
 
           // ✅ LANGUAGE SYSTEM — YE TEEN CHEEZEIN ADD KI HAIN
           locale: settingsProvider.currentLocale,

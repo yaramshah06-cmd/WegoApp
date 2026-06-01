@@ -27,7 +27,14 @@
       "Bash(git stash *)",
       "Bash(git ls-tree *)",
       "Bash(Get-ChildItem -Path \"D:\\\\wego_marriage\\\\wego_new\\\\lib\" -Recurse -Filter \"*.dart\")",
-      "Bash(Select-Object FullName)"
+      "Bash(Select-Object FullName)",
+      "Bash(grep -v \"//\")",
+      "Bash(awk 'NR==297{print; print \"\"; print \"  void _openShareSheet\\(\\) {\"; print \"    _controller?.pause\\(\\);\"; print \"    setState\\(\\(\\) => _showPauseOverlay = true\\);\"; print \"    PostSharedSheet.show\\(context, post: widget.initialPost\\).whenComplete\\(\\(\\) {\"; print \"      if \\(!mounted\\) return;\"; print \"      _controller?.play\\(\\);\"; print \"      setState\\(\\(\\) => _showPauseOverlay = false\\);\"; print \"    }\\);\"; print \"  }\"; skip=1; next} skip && NR<615 {next} {skip=0; print}' lib/screen/fullscreen_video_viewer.dart)",
+      "Bash(git -C /d/wego_marriage diff --stat wego_new/lib/screen/fullscreen_video_viewer.dart)",
+      "Bash(awk 'NR>=470 && NR<=614 {next} {print}' lib/screen/fullscreen_video_viewer.dart)",
+      "Bash(awk 'NR>=330 && NR<=468 {next} {print}')",
+      "Bash(awk 'NR>=298 && NR<=305 {next} {print}')",
+      "Bash(awk 'NR>=470 && NR<=614 {next} NR>=330 && NR<=468 {next} NR>=298 && NR<=305 {next} {print}' lib/screen/fullscreen_video_viewer.dart)"
     ]
   }
 }

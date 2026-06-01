@@ -1,13 +1,11 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:badges/badges.dart' as badges;
+import 'package:wego_marriage/main.dart' show appRouteObserver;
 import 'package:wego_marriage/providers/story_provider.dart';
 import 'package:wego_marriage/providers/chat_provider.dart';
 import 'package:wego_marriage/providers/user_provider.dart';
@@ -18,7 +16,6 @@ import 'package:wego_marriage/screen/notifications_screen.dart';
 import 'package:wego_marriage/services/notification_service.dart';
 import 'package:wego_marriage/screen/massage_list_screen.dart';
 import 'package:wego_marriage/screen/comments_screen.dart';
-import 'package:wego_marriage/screen/chat_screen.dart';
 import 'package:wego_marriage/screen/user_profile_screen.dart';
 import 'package:wego_marriage/screen/create_content_screen.dart';
 import 'package:wego_marriage/screen/fullscreen_video_viewer.dart';
@@ -29,15 +26,13 @@ import 'package:wego_marriage/screen/xp_service.dart';
 import 'package:wego_marriage/services/local_storage_service.dart';
 import 'package:wego_marriage/services/follow_controller.dart';
 import 'package:wego_marriage/widgets/latest_badge_chip.dart';
+import 'package:wego_marriage/widgets/post_shared_sheet.dart';
 import 'package:wego_marriage/services/message_badge_service.dart';
 import 'package:wego_marriage/services/legendary_announcement_service.dart';
 import 'package:wego_marriage/services/cloudinary_service.dart';
 import 'package:video_player/video_player.dart';
 import 'package:audioplayers/audioplayers.dart';
-import 'package:share_plus/share_plus.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'app_localizations.dart';
-import 'app_translations.dart';
 
 class HomeFeedScreen extends StatefulWidget {
   const HomeFeedScreen({super.key});
@@ -955,7 +950,8 @@ class InstagramStylePostCard extends StatefulWidget {
       InstagramStylePostCardState();
 }
 
-class InstagramStylePostCardState extends State<InstagramStylePostCard> {
+class InstagramStylePostCardState extends State<InstagramStylePostCard>
+    with RouteAware, WidgetsBindingObserver {
   bool _isLiked = false;
   bool _isSaved = false;
   // ─── Cross-screen follow-state ───────────────────────────────────────────
@@ -981,9 +977,23 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
   final _firestore = FirebaseFirestore.instance;
   final _auth = FirebaseAuth.instance;
 
+  // ─── Playback gating ────────────────────────────────────────────────────
+  // Card "playable" tab hai jab teeno true hon:
+  //   1. `_routeIsTop` — koi screen iske upar push nahi hui (route on top)
+  //   2. `_appResumed`  — app foreground me hai
+  //   3. `_visibleEnough` — card ka >=50% area viewport ke andar hai
+  // Kisi bhi ek false hote hi video aur background music foran pause.
+  bool _routeIsTop = true;
+  bool _appResumed = true;
+  bool _visibleEnough = false;
+  // Scrollable position jisko listen kar rahe hain — visibility re-compute
+  // har scroll tick par hota hai.
+  ScrollPosition? _scrollPosition;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // Shared follow-state via app-wide FollowController — har screen same
     // notifier listen karega, follow karte hi sab jagah pill foran flip.
     _followNotifier = FollowController.instance.notifier(widget.post.userId);
@@ -992,6 +1002,110 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
     _loadPersistedState();
     if (widget.post.isVideo) _initializeVideo();
     _maybeStartSong();
+    // Pehle frame ke baad visibility check — initial state set ho jaye.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _recomputeVisibility();
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Parent route subscribe karo — push/pop par notify hone ke liye.
+    final route = ModalRoute.of(context);
+    if (route is ModalRoute) {
+      appRouteObserver.subscribe(this, route);
+    }
+    // Enclosing Scrollable ka position pick up karo (feed ka ListView).
+    // Card list me andar hai to yeh ListView ki position return karega.
+    final newPos = Scrollable.maybeOf(context)?.position;
+    if (newPos != _scrollPosition) {
+      _scrollPosition?.removeListener(_onScrollTick);
+      _scrollPosition = newPos;
+      _scrollPosition?.addListener(_onScrollTick);
+    }
+  }
+
+  void _onScrollTick() {
+    // Har scroll frame pe visibility re-compute. Cheap operation —
+    // RenderBox global offset + viewport bounds intersection.
+    if (mounted) _recomputeVisibility();
+  }
+
+  /// Card ka >= 50% area screen-viewport me visible hai ya nahi.
+  /// Jab status flip ho to playback apply karo.
+  void _recomputeVisibility() {
+    final renderObj = context.findRenderObject();
+    if (renderObj is! RenderBox || !renderObj.attached) return;
+
+    final size = renderObj.size;
+    if (size.height <= 0) return;
+
+    final offset = renderObj.localToGlobal(Offset.zero);
+    final screenSize = MediaQuery.of(context).size;
+
+    // Card ka viewport ke saath vertical intersection nikalo. Horizontal
+    // ko ignore karte hain (feed full-width hota hai).
+    final cardTop = offset.dy;
+    final cardBottom = offset.dy + size.height;
+    final visibleTop = cardTop.clamp(0.0, screenSize.height);
+    final visibleBottom = cardBottom.clamp(0.0, screenSize.height);
+    final visibleHeight = (visibleBottom - visibleTop).clamp(0.0, size.height);
+    final fraction = visibleHeight / size.height;
+
+    final shouldPlay = fraction >= 0.5;
+    if (shouldPlay != _visibleEnough) {
+      _visibleEnough = shouldPlay;
+      _applyPlaybackState();
+    }
+  }
+
+  /// Three-input AND: video aur song dono ko playable state apply karo.
+  void _applyPlaybackState() {
+    final playable = _routeIsTop && _appResumed && _visibleEnough;
+    final vc = _videoController;
+    if (vc != null && _isVideoInitialized) {
+      if (playable) {
+        if (!vc.value.isPlaying) vc.play();
+      } else {
+        if (vc.value.isPlaying) vc.pause();
+      }
+    }
+    final sp = _songPlayer;
+    if (sp != null) {
+      if (playable) {
+        if (!_songPlaying) {
+          sp.resume();
+          _songPlaying = true;
+        }
+      } else {
+        if (_songPlaying) {
+          sp.pause();
+          _songPlaying = false;
+        }
+      }
+    }
+  }
+
+  // ── RouteAware — koi screen upar push hui ya wapas aaye ──
+  @override
+  void didPushNext() {
+    _routeIsTop = false;
+    _applyPlaybackState();
+  }
+
+  @override
+  void didPopNext() {
+    _routeIsTop = true;
+    _applyPlaybackState();
+  }
+
+  // ── App lifecycle ──
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final wasResumed = _appResumed;
+    _appResumed = state == AppLifecycleState.resumed;
+    if (wasResumed != _appResumed) _applyPlaybackState();
   }
 
   // Photo post + song chuna gaya tha → trim window par loop chalao.
@@ -1022,7 +1136,12 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
         await _songPlayer!
             .seek(Duration(milliseconds: widget.post.songStartMs));
       }
-      if (mounted) setState(() => _songPlaying = true);
+      // ✅ Player ready hai — songPlaying ko tentative true rakho, lekin
+      //    foran gating apply karo. Agar card visible nahi to pause hote
+      //    hi `_songPlaying = false` ho jayega.
+      _songPlaying = true;
+      _applyPlaybackState();
+      if (mounted) setState(() {});
     } catch (e) {
       debugPrint('Post song play error: $e');
     }
@@ -1070,6 +1189,9 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
 
   @override
   void dispose() {
+    _scrollPosition?.removeListener(_onScrollTick);
+    appRouteObserver.unsubscribe(this);
+    WidgetsBinding.instance.removeObserver(this);
     _followNotifier?.removeListener(_onBusChange);
     _videoController?.dispose();
     _songPlayer?.dispose();
@@ -1091,7 +1213,10 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
       if (mounted) {
         setState(() => _isVideoInitialized = true);
         _videoController?.setLooping(true);
-        _videoController?.play();
+        // ✅ Auto-play yahaan unconditional NAHI hai — playback gating
+        //    (_routeIsTop && _appResumed && _visibleEnough) decide karega.
+        //    Scroll par feed pe nazar na ho to video silently band rahe.
+        _applyPlaybackState();
       }
     }).catchError((e) {
       debugPrint('Video init failed: $e');
@@ -1334,581 +1459,6 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
     );
   }
 
-  // ─── Share bottom sheet — followers + messaged users + external apps ───
-  Future<List<_ShareTarget>> _loadShareTargets() async {
-    final uid = _auth.currentUser?.uid;
-    if (uid == null) return [];
-
-    final Map<String, _ShareTarget> byUid = {};
-
-    // 1. Followed users — PARALLEL fan-out (no more N sequential round-trips).
-    try {
-      final followingSnap = await _firestore
-          .collection('users')
-          .doc(uid)
-          .collection('following')
-          .get();
-
-      final docsToFetch =
-          followingSnap.docs.where((d) => d.id != uid).toList();
-      final userDocs = await Future.wait(
-        docsToFetch.map((d) => _firestore.collection('users').doc(d.id).get()),
-      );
-      for (final userDoc in userDocs) {
-        if (!userDoc.exists) continue;
-        final data = userDoc.data() ?? {};
-        byUid[userDoc.id] = _ShareTarget(
-          userId: userDoc.id,
-          username: (data['username'] ??
-                  data['fullName'] ??
-                  data['name'] ??
-                  'User')
-              .toString(),
-          avatarUrl: (data['photoUrl'] ?? '').toString(),
-          source: 'following',
-        );
-      }
-    } catch (e) {
-      debugPrint('share: following load error $e');
-    }
-
-    // 2. Messaged users — fallback for anyone we chat with but don't follow
-    try {
-      final chatProvider = context.read<ChatProvider>();
-      for (final c in chatProvider.chats) {
-        if (c.userId.isEmpty || c.userId == uid) continue;
-        byUid.putIfAbsent(
-          c.userId,
-          () => _ShareTarget(
-            userId: c.userId,
-            username: c.name,
-            avatarUrl: c.imageUrl,
-            source: 'message',
-          ),
-        );
-      }
-    } catch (_) {}
-
-    return byUid.values.toList();
-  }
-
-  String _buildPostLink() =>
-      'https://wegomarriage.app/post/${widget.post.id}';
-
-  Future<void> _incrementShareCount() async {
-    try {
-      await _firestore
-          .collection('posts')
-          .doc(widget.post.id)
-          .update({'shareCount': FieldValue.increment(1)});
-    } catch (_) {}
-  }
-
-  // ⚠️ NOTE: `caption` parameter is required — caller MUST pre-build it using
-  // context.tr() BEFORE popping the bottom sheet. We cannot call context.tr()
-  // inside this async method because Provider lookups fail after the sheet's
-  // context leaves the widget tree.
-  Future<void> _sendPostInChat(
-      _ShareTarget target, String caption) async {
-    final uid = _auth.currentUser?.uid;
-    if (uid == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Not signed in')),
-        );
-      }
-      return;
-    }
-    if (target.userId.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invalid recipient')),
-        );
-      }
-      return;
-    }
-
-    // ✅ Chat room ID — same formula jo FirebaseChatService use karta hai
-    final svc = FirebaseChatService();
-    final chatRoomId = svc.getChatRoomId(uid, target.userId);
-    debugPrint('Sharing post ${widget.post.id} to chat $chatRoomId');
-
-    final now = DateTime.now();
-    final h = now.hour > 12
-        ? now.hour - 12
-        : (now.hour == 0 ? 12 : now.hour);
-    final amPm = now.hour >= 12 ? 'PM' : 'AM';
-    final timeString =
-        '$h:${now.minute.toString().padLeft(2, '0')} $amPm';
-
-    final isVideo = widget.post.isVideo;
-    // Thumbnail — feed already postImageUrl ko thumb ke roop mein dikhata hai
-    // (video posts mein bhi yeh server-side generated thumbnail hota hai).
-    final thumbUrl = widget.post.postImageUrl;
-    // `caption` param ab in-app share mein use nahi hota (external share ke
-    // liye banaya gaya tha). Reference rakhte hain warna `unused_parameter`.
-    debugPrint('Internal share: card bhej rahe hain (auto-caption skipped, '
-        'len=${caption.length}).');
-
-    // ✅ Instagram-style shared post card: poora media NAHI bhejte — sirf
-    // post reference (id + author + thumbnail). Receiver chat bubble par tap
-    // karke PostViewerScreen mein full post dekh sakta hai.
-    // NOTE: `text` ke andar user ka optional note ja sakta hai. Auto-generated
-    // "Check out this post by ..." caption ko skip kar rahe hain taaki card
-    // saaf rahe aur attribution sirf author row se aaye.
-    final msgData = <String, dynamic>{
-      'senderId': uid,
-      'senderName': _auth.currentUser?.displayName ?? '',
-      'receiverId': target.userId,
-      // ✅ `caption` parameter is the auto-generated external-share text
-      // ("Check out this post by @user <link>") — yeh chat card mein NA aaye.
-      // Card khud hi attribution + thumbnail dikhata hai. Future mein agar
-      // user-typed note input add ho to wahi yahan jana chahiye.
-      'text': '',
-      'type': MsgType.sharedPost.index,
-      // imageUrl rakha hai backward-compat / quick preview ke liye
-      'imageUrl': thumbUrl,
-      'avatarUrl': _auth.currentUser?.photoURL ?? '',
-      'status': MsgStatus.sent.index,
-      'time': timeString,
-      'dateTime': now.millisecondsSinceEpoch,
-      'duration': null,
-      'isViewOnce': false,
-      'replyToText': null,
-      'replyToType': null,
-      'isDeleted': false,
-      'isUnsent': false,
-      'isStarred': false,
-      'isPinned': false,
-      'isEdited': false,
-      'reactions': <String, dynamic>{},
-      'isRead': false,
-      // Shared post metadata — _SharedPostCardBubble in chat_screen.dart isi
-      // se card render karta hai aur PostViewerScreen ko id pass karta hai.
-      'sharedPostId': widget.post.id,
-      'sharedPostAuthor': widget.post.username,
-      'sharedPostAuthorAvatar': widget.post.avatarUrl,
-      'sharedPostThumbUrl': thumbUrl,
-      'sharedPostIsVideo': isVideo,
-    };
-
-    try {
-      await svc.sendMessage(
-        chatRoomId: chatRoomId,
-        messageData: msgData,
-      );
-      await _incrementShareCount();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Sent to ${target.username}'),
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Send failed: $e')),
-        );
-      }
-    }
-  }
-
-  // ─── Thumbnail-only download (FB/WA share ke liye) ───
-  // External share par sirf chhoti preview image + link jaata hai — pura
-  // media (full video / hi-res image) kabhi attach nahi karte. Receiver ko
-  // wego link click karke app/web par hi full post dikhega.
-  Future<XFile?> _downloadThumbToTemp() async {
-    // Image posts ke liye postImageUrl, video posts ke liye bhi postImageUrl
-    // (Firestore generally video ka server-side thumbnail isi field mein save
-    // karta hai — feed bhi yahi use karta hai preview ke liye).
-    final url = widget.post.postImageUrl;
-    if (url.isEmpty) return null;
-
-    try {
-      final resp = await http
-          .get(Uri.parse(url))
-          .timeout(const Duration(seconds: 15));
-      if (resp.statusCode != 200) return null;
-
-      // 1MB se bada hua to bhi rakh lete hain — most CDN thumbs chhote hote
-      // hain; skip karne se share-without-image situation banegi.
-      final dir = await getTemporaryDirectory();
-      final filename =
-          'wego_thumb_${widget.post.id}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-      final file = File('${dir.path}/$filename');
-      await file.writeAsBytes(resp.bodyBytes);
-
-      return XFile(
-        file.path,
-        mimeType: 'image/jpeg',
-        name: filename,
-      );
-    } catch (e) {
-      debugPrint('thumb download failed: $e');
-      return null;
-    }
-  }
-
-  // ⚠️ `toastMsg` MUST be pre-built by caller (context.tr can't be called
-  // from async event handlers — it does listen:true Provider.of which fails)
-  Future<void> _copyPostLink({String toastMsg = 'Link copied'}) async {
-    await Clipboard.setData(ClipboardData(text: _buildPostLink()));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(toastMsg)),
-    );
-  }
-
-  // ─── Loading dialog show karo media download ke dauran ───
-  void _showLoading() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(
-        child: CircularProgressIndicator(color: Color(0xFF4A6CF7)),
-      ),
-    );
-  }
-
-  void _hideLoading() {
-    if (mounted) Navigator.of(context, rootNavigator: true).pop();
-  }
-
-  // ⚠️ `caption` MUST be pre-built by caller (see _sendPostInChat note)
-  Future<void> _shareToWhatsApp(String caption) async {
-    _showLoading();
-    final xfile = await _downloadThumbToTemp();
-    _hideLoading();
-
-    if (xfile == null) {
-      // Media download fail — fallback text-only link
-      final text = Uri.encodeComponent(caption);
-      final uri = Uri.parse('whatsapp://send?text=$text');
-      final fallback = Uri.parse('https://wa.me/?text=$text');
-      try {
-        if (await canLaunchUrl(uri)) {
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
-        } else {
-          await launchUrl(fallback, mode: LaunchMode.externalApplication);
-        }
-        await _incrementShareCount();
-      } catch (_) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('WhatsApp not available')),
-          );
-        }
-      }
-      return;
-    }
-
-    // ✅ Actual photo/video file + caption — WhatsApp pick karta hai
-    // sharePlus pe WhatsApp specifically target karne ka direct API nahi hai,
-    // par xfile share karne par WhatsApp default media handler ke saath show hota hai
-    try {
-      await Share.shareXFiles(
-        [xfile],
-        text: caption,
-        subject: 'Wego Post',
-      );
-      await _incrementShareCount();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Share failed: $e')),
-        );
-      }
-    }
-  }
-
-  // ⚠️ `caption` MUST be pre-built by caller (see _sendPostInChat note)
-  Future<void> _shareToFacebook(String caption) async {
-    _showLoading();
-    final xfile = await _downloadThumbToTemp();
-    _hideLoading();
-
-    if (xfile == null) {
-      // Fallback: FB sharer URL (sirf link, media nahi)
-      final link = Uri.encodeComponent(_buildPostLink());
-      final uri = Uri.parse(
-          'https://www.facebook.com/sharer/sharer.php?u=$link');
-      try {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-        await _incrementShareCount();
-      } catch (_) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Facebook open failed')),
-          );
-        }
-      }
-      return;
-    }
-
-    // ✅ Native share with media file — user FB pick karega aur woh photo/video
-    // ke saath compose screen open karega (caption mein wego link)
-    try {
-      await Share.shareXFiles(
-        [xfile],
-        text: caption,
-        subject: 'Wego Post',
-      );
-      await _incrementShareCount();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Share failed: $e')),
-        );
-      }
-    }
-  }
-
-  // ⚠️ Caller (build method) MUST pre-build all strings via context.tr()
-  // and pass them in. We can't call context.tr() inside event handlers
-  // because it does listen:true Provider.of which only works in build().
-  void _showShareSheet(
-    BuildContext context, {
-    required String sharedCaption,
-    required String copyLinkLabel,
-    required String linkCopiedMsg,
-  }) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
-    final textColor = isDark ? Colors.white : Colors.black87;
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: bg,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (sheetCtx) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.6,
-          minChildSize: 0.4,
-          maxChildSize: 0.92,
-          expand: false,
-          builder: (_, scrollController) {
-            return SafeArea(
-              child: Column(
-                children: [
-                  Container(
-                    width: 40,
-                    height: 4,
-                    margin: const EdgeInsets.only(top: 10, bottom: 12),
-                    decoration: BoxDecoration(
-                      color: isDark ? Colors.grey[600] : Colors.grey[300],
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Row(
-                      children: [
-                        Text(
-                          'Send to',
-                          style: TextStyle(
-                            color: textColor,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: FutureBuilder<List<_ShareTarget>>(
-                      future: _loadShareTargets(),
-                      builder: (context, snap) {
-                        if (snap.connectionState ==
-                            ConnectionState.waiting) {
-                          return const Center(
-                              child: CircularProgressIndicator(
-                                  color: Color(0xFF4A6CF7)));
-                        }
-                        final targets = snap.data ?? [];
-                        if (targets.isEmpty) {
-                          return Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(20),
-                              child: Text(
-                                'No followed or messaged users yet',
-                                style: TextStyle(
-                                  color: Colors.grey[500],
-                                  fontSize: 14,
-                                ),
-                              ),
-                            ),
-                          );
-                        }
-                        return ListView.builder(
-                          controller: scrollController,
-                          itemCount: targets.length,
-                          itemBuilder: (_, i) {
-                            final t = targets[i];
-                            return ListTile(
-                              leading: CircleAvatar(
-                                radius: 22,
-                                backgroundImage: t.avatarUrl.startsWith('http')
-                                    ? NetworkImage(t.avatarUrl)
-                                    : null,
-                                child: t.avatarUrl.startsWith('http')
-                                    ? null
-                                    : const Icon(Icons.person, size: 20),
-                              ),
-                              title: Text(
-                                t.username,
-                                style: TextStyle(
-                                  color: textColor,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              subtitle: Text(
-                                t.source == 'following'
-                                    ? 'Following'
-                                    : 'From messages',
-                                style: TextStyle(
-                                  color: Colors.grey[500],
-                                  fontSize: 12,
-                                ),
-                              ),
-                              trailing: ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF0095F6),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 16, vertical: 6),
-                                  minimumSize: const Size(0, 32),
-                                ),
-                                onPressed: () async {
-                                  Navigator.pop(sheetCtx);
-                                  await _sendPostInChat(t, sharedCaption);
-                                },
-                                child: const Text(
-                                  'Send',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
-                        );
-                      },
-                    ),
-                  ),
-                  Divider(
-                    height: 1,
-                    color: isDark ? Colors.grey[800] : Colors.grey[200],
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 12),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceAround,
-                      children: [
-                        _shareExternalIcon(
-                          label: copyLinkLabel,
-                          icon: Icons.link,
-                          bgColor: Colors.grey,
-                          onTap: () async {
-                            Navigator.pop(sheetCtx);
-                            await _copyPostLink(toastMsg: linkCopiedMsg);
-                          },
-                          textColor: textColor,
-                        ),
-                        _shareExternalIcon(
-                          label: 'WhatsApp',
-                          icon: Icons.chat,
-                          bgColor: const Color(0xFF25D366),
-                          onTap: () async {
-                            Navigator.pop(sheetCtx);
-                            await _shareToWhatsApp(sharedCaption);
-                          },
-                          textColor: textColor,
-                        ),
-                        _shareExternalIcon(
-                          label: 'Facebook',
-                          icon: Icons.facebook,
-                          bgColor: const Color(0xFF1877F2),
-                          onTap: () async {
-                            Navigator.pop(sheetCtx);
-                            await _shareToFacebook(sharedCaption);
-                          },
-                          textColor: textColor,
-                        ),
-                        _shareExternalIcon(
-                          label: 'More',
-                          icon: Icons.more_horiz,
-                          bgColor: Colors.blueGrey,
-                          onTap: () async {
-                            Navigator.pop(sheetCtx);
-                            _showLoading();
-                            final xfile = await _downloadThumbToTemp();
-                            _hideLoading();
-                            if (xfile != null) {
-                              await Share.shareXFiles([xfile],
-                                  text: sharedCaption, subject: 'Wego Post');
-                            } else {
-                              await Share.share(sharedCaption);
-                            }
-                            await _incrementShareCount();
-                          },
-                          textColor: textColor,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Widget _shareExternalIcon({
-    required String label,
-    required IconData icon,
-    required Color bgColor,
-    required VoidCallback onTap,
-    required Color textColor,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(
-              color: bgColor,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, color: Colors.white, size: 26),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            label,
-            style: TextStyle(
-              color: textColor,
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   void _showMoreOptions(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -2567,19 +2117,13 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
                     const SizedBox(width: 16),
                     Builder(builder: (btnCtx) {
                       // ✅ Pre-build translated strings HERE (build context).
-                      // Cannot do this inside the onTap event handler — it
-                      // would call listen:true Provider.of from outside
-                      // build() and silently crash the share sheet.
-                      final sharedCaption =
-                          '${btnCtx.tr('check_out_post')} ${widget.post.username}\n${_buildPostLink()}';
-                      final copyLinkLabel = btnCtx.tr('copy_link');
-                      final linkCopiedMsg = btnCtx.tr('link_copied');
+                      // Shared bottom sheet — followers/messaged + external
+                      // (WA/FB/Copy/More) + author-gated download. Saari
+                      // localization PostSharedSheet ke andar resolve hoti.
                       return GestureDetector(
-                        onTap: () => _showShareSheet(
+                        onTap: () => PostSharedSheet.show(
                           btnCtx,
-                          sharedCaption: sharedCaption,
-                          copyLinkLabel: copyLinkLabel,
-                          linkCopiedMsg: linkCopiedMsg,
+                          post: widget.post,
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
@@ -3003,23 +2547,6 @@ class Post {
       songEndMs: (data['songEndMs'] as num?)?.toInt() ?? 30000,
     );
   }
-}
-
-// ─────────────────────────────────────────────────────────────
-// Share sheet model — followed users + messaged users
-// ─────────────────────────────────────────────────────────────
-class _ShareTarget {
-  final String userId;
-  final String username;
-  final String avatarUrl;
-  final String source; // 'following' | 'message'
-
-  _ShareTarget({
-    required this.userId,
-    required this.username,
-    required this.avatarUrl,
-    required this.source,
-  });
 }
 
 // ─────────────────────────────────────────────────────────────

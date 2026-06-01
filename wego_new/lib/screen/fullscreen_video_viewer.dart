@@ -17,15 +17,14 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 
-import 'package:wego_marriage/providers/chat_provider.dart';
+import 'package:wego_marriage/main.dart' show appRouteObserver;
 import 'package:wego_marriage/services/follow_controller.dart';
 import 'package:wego_marriage/services/local_storage_service.dart';
 import 'package:wego_marriage/services/notification_service.dart';
+import 'package:wego_marriage/widgets/post_shared_sheet.dart';
 
-import 'chat_screen.dart' show FirebaseChatService, MsgStatus, MsgType;
 import 'comments_screen.dart';
 import 'home_feed_screen.dart' show Post;
 import 'xp_service.dart';
@@ -44,7 +43,8 @@ class FullscreenVideoViewer extends StatefulWidget {
   State<FullscreenVideoViewer> createState() => _FullscreenVideoViewerState();
 }
 
-class _FullscreenVideoViewerState extends State<FullscreenVideoViewer> {
+class _FullscreenVideoViewerState extends State<FullscreenVideoViewer>
+    with RouteAware, WidgetsBindingObserver {
   VideoPlayerController? _controller;
   bool _ready = false;
   bool _initError = false;
@@ -58,14 +58,60 @@ class _FullscreenVideoViewerState extends State<FullscreenVideoViewer> {
   // sab jagah pill foran flip ho jata hai.
   ValueNotifier<bool>? _followNotifier;
 
+  // ─── Playback gating (route on top + app foreground) ───
+  bool _routeIsTop = true;
+  bool _appResumed = true;
+  // User ne play/pause manually toggle kiya hai — gating uska honor kare.
+  bool _userPaused = false;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initVideo();
     _followNotifier =
         FollowController.instance.notifier(widget.initialPost.userId);
     _followNotifier!.addListener(_onFollowChange);
     FollowController.instance.watch(widget.initialPost.userId);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is ModalRoute) {
+      appRouteObserver.subscribe(this, route);
+    }
+  }
+
+  void _applyPlaybackState() {
+    final c = _controller;
+    if (c == null || !_ready) return;
+    final playable = _routeIsTop && _appResumed && !_userPaused;
+    if (playable) {
+      if (!c.value.isPlaying) c.play();
+    } else {
+      if (c.value.isPlaying) c.pause();
+    }
+  }
+
+  @override
+  void didPushNext() {
+    _routeIsTop = false;
+    _applyPlaybackState();
+  }
+
+  @override
+  void didPopNext() {
+    _routeIsTop = true;
+    _applyPlaybackState();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final wasResumed = _appResumed;
+    _appResumed = state == AppLifecycleState.resumed;
+    if (wasResumed != _appResumed) _applyPlaybackState();
   }
 
   void _onFollowChange() {
@@ -87,8 +133,9 @@ class _FullscreenVideoViewerState extends State<FullscreenVideoViewer> {
         return;
       }
       await c.setLooping(true);
-      await c.play();
       setState(() => _ready = true);
+      // Gating decide karega play hoga ya nahi (route on top + foreground).
+      _applyPlaybackState();
     } catch (e) {
       debugPrint('Fullscreen video init failed: $e');
       if (mounted) setState(() => _initError = true);
@@ -97,6 +144,8 @@ class _FullscreenVideoViewerState extends State<FullscreenVideoViewer> {
 
   @override
   void dispose() {
+    appRouteObserver.unsubscribe(this);
+    WidgetsBinding.instance.removeObserver(this);
     _followNotifier?.removeListener(_onFollowChange);
     _controller?.dispose();
     super.dispose();
@@ -107,9 +156,11 @@ class _FullscreenVideoViewerState extends State<FullscreenVideoViewer> {
     if (c == null || !_ready) return;
     setState(() {
       if (c.value.isPlaying) {
+        _userPaused = true;
         c.pause();
         _showPauseOverlay = true;
       } else {
+        _userPaused = false;
         c.play();
         _showPauseOverlay = false;
       }
@@ -295,14 +346,6 @@ class _FullscreenVideoViewerState extends State<FullscreenVideoViewer> {
     }
   }
 
-  Future<void> _incrementShareCount() async {
-    try {
-      await _firestore
-          .collection('posts')
-          .doc(widget.postId)
-          .update({'shareCount': FieldValue.increment(1)});
-    } catch (_) {}
-  }
 
   void _openComments() {
     // Video pause kar ke phir push — taa ke comments screen ke peeche
@@ -322,294 +365,20 @@ class _FullscreenVideoViewerState extends State<FullscreenVideoViewer> {
       ),
     ).then((_) {
       if (!mounted) return;
-      _controller?.play();
       setState(() => _showPauseOverlay = false);
+      _applyPlaybackState();
     });
   }
 
-  // ── Share targets — followers + messaged users (parallel fetch) ──
-  Future<List<_ShareTarget>> _loadShareTargets() async {
-    final uid = _auth.currentUser?.uid;
-    if (uid == null) return [];
-
-    // Provider lookup pehle kar lo, await ke baad context use karne se
-    // analyzer warn karta hai aur theoretically widget unmount ho sakta hai.
-    final chatProvider = context.read<ChatProvider>();
-
-    final Map<String, _ShareTarget> byUid = {};
-
-    // Followed users — parallel fan-out.
-    try {
-      final followingSnap = await _firestore
-          .collection('users')
-          .doc(uid)
-          .collection('following')
-          .get();
-      final docsToFetch =
-          followingSnap.docs.where((d) => d.id != uid).toList();
-      final userDocs = await Future.wait(
-        docsToFetch
-            .map((d) => _firestore.collection('users').doc(d.id).get()),
-      );
-      for (final userDoc in userDocs) {
-        if (!userDoc.exists) continue;
-        final data = userDoc.data() ?? {};
-        byUid[userDoc.id] = _ShareTarget(
-          userId: userDoc.id,
-          username: (data['username'] ??
-                  data['fullName'] ??
-                  data['name'] ??
-                  'User')
-              .toString(),
-          avatarUrl: (data['photoUrl'] ?? '').toString(),
-          source: 'following',
-        );
-      }
-    } catch (e) {
-      debugPrint('Fullscreen share: following load error $e');
-    }
-
-    // Messaged users — anyone we chat with but don't follow.
-    try {
-      for (final c in chatProvider.chats) {
-        if (c.userId.isEmpty || c.userId == uid) continue;
-        byUid.putIfAbsent(
-          c.userId,
-          () => _ShareTarget(
-            userId: c.userId,
-            username: c.name,
-            avatarUrl: c.imageUrl,
-            source: 'message',
-          ),
-        );
-      }
-    } catch (_) {}
-
-    return byUid.values.toList();
-  }
-
-  Future<void> _sendPostInChat(_ShareTarget target) async {
-    final uid = _auth.currentUser?.uid;
-    if (uid == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Not signed in')),
-        );
-      }
-      return;
-    }
-    if (target.userId.isEmpty) return;
-
-    final svc = FirebaseChatService();
-    final chatRoomId = svc.getChatRoomId(uid, target.userId);
-
-    final now = DateTime.now();
-    final h = now.hour > 12
-        ? now.hour - 12
-        : (now.hour == 0 ? 12 : now.hour);
-    final amPm = now.hour >= 12 ? 'PM' : 'AM';
-    final timeString =
-        '$h:${now.minute.toString().padLeft(2, '0')} $amPm';
-
-    final thumbUrl = widget.initialPost.postImageUrl;
-    final msgData = <String, dynamic>{
-      'senderId': uid,
-      'senderName': _auth.currentUser?.displayName ?? '',
-      'receiverId': target.userId,
-      'text': '',
-      'type': MsgType.sharedPost.index,
-      'imageUrl': thumbUrl,
-      'avatarUrl': _auth.currentUser?.photoURL ?? '',
-      'status': MsgStatus.sent.index,
-      'time': timeString,
-      'dateTime': now.millisecondsSinceEpoch,
-      'duration': null,
-      'isViewOnce': false,
-      'replyToText': null,
-      'replyToType': null,
-      'isDeleted': false,
-      'isUnsent': false,
-      'isStarred': false,
-      'isPinned': false,
-      'isEdited': false,
-      'reactions': <String, dynamic>{},
-      'isRead': false,
-      // Shared-post card metadata — receiver chat me Insta-style card
-      // dekhega, tap par PostViewerScreen me full post open hoga (chat
-      // screen ka existing _SharedPostCardBubble flow).
-      'sharedPostId': widget.postId,
-      'sharedPostAuthor': widget.initialPost.username,
-      'sharedPostAuthorAvatar': widget.initialPost.avatarUrl,
-      'sharedPostThumbUrl': thumbUrl,
-      'sharedPostIsVideo': widget.initialPost.isVideo,
-    };
-
-    try {
-      await svc.sendMessage(
-        chatRoomId: chatRoomId,
-        messageData: msgData,
-      );
-      await _incrementShareCount();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Sent to ${target.username}'),
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Send failed: $e')),
-        );
-      }
-    }
-  }
-
+  // Shared bottom sheet — followers/messaged + WA/FB/Copy/More +
+  // author-gated download. Pure logic ab PostSharedSheet ke andar hai.
   void _openShareSheet() {
     _controller?.pause();
     setState(() => _showPauseOverlay = true);
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: const Color(0xFF1E1E1E),
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (sheetCtx) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.6,
-          minChildSize: 0.4,
-          maxChildSize: 0.92,
-          expand: false,
-          builder: (_, scrollController) {
-            return SafeArea(
-              child: Column(
-                children: [
-                  Container(
-                    width: 40,
-                    height: 4,
-                    margin: const EdgeInsets.only(top: 10, bottom: 12),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[600],
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16),
-                    child: Row(
-                      children: [
-                        Text(
-                          'Send to',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: FutureBuilder<List<_ShareTarget>>(
-                      future: _loadShareTargets(),
-                      builder: (context, snap) {
-                        if (snap.connectionState ==
-                            ConnectionState.waiting) {
-                          return const Center(
-                            child: CircularProgressIndicator(
-                              color: Color(0xFF4A6CF7),
-                            ),
-                          );
-                        }
-                        final targets = snap.data ?? [];
-                        if (targets.isEmpty) {
-                          return Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(20),
-                              child: Text(
-                                'No followed or messaged users yet',
-                                style: TextStyle(
-                                  color: Colors.grey[400],
-                                  fontSize: 14,
-                                ),
-                              ),
-                            ),
-                          );
-                        }
-                        return ListView.builder(
-                          controller: scrollController,
-                          itemCount: targets.length,
-                          itemBuilder: (_, i) {
-                            final t = targets[i];
-                            return ListTile(
-                              leading: CircleAvatar(
-                                radius: 22,
-                                backgroundColor: Colors.grey[700],
-                                backgroundImage: t.avatarUrl.startsWith('http')
-                                    ? NetworkImage(t.avatarUrl)
-                                    : null,
-                                child: t.avatarUrl.startsWith('http')
-                                    ? null
-                                    : const Icon(Icons.person,
-                                        size: 20, color: Colors.white),
-                              ),
-                              title: Text(
-                                t.username,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              subtitle: Text(
-                                t.source == 'following'
-                                    ? 'Following'
-                                    : 'From messages',
-                                style: TextStyle(
-                                  color: Colors.grey[400],
-                                  fontSize: 12,
-                                ),
-                              ),
-                              trailing: ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF0095F6),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 16, vertical: 6),
-                                  minimumSize: const Size(0, 32),
-                                ),
-                                onPressed: () async {
-                                  Navigator.pop(sheetCtx);
-                                  await _sendPostInChat(t);
-                                },
-                                child: const Text(
-                                  'Send',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    ).whenComplete(() {
+    PostSharedSheet.show(context, post: widget.initialPost).whenComplete(() {
       if (!mounted) return;
-      _controller?.play();
       setState(() => _showPauseOverlay = false);
+      _applyPlaybackState();
     });
   }
 
@@ -940,17 +709,3 @@ class _FullscreenVideoViewerState extends State<FullscreenVideoViewer> {
   }
 }
 
-// ─── Share sheet model — mirrors home_feed_screen._ShareTarget ───
-class _ShareTarget {
-  final String userId;
-  final String username;
-  final String avatarUrl;
-  final String source; // 'following' | 'message'
-
-  _ShareTarget({
-    required this.userId,
-    required this.username,
-    required this.avatarUrl,
-    required this.source,
-  });
-}
