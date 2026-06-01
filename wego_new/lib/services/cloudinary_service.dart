@@ -79,4 +79,50 @@ class CloudinaryService {
       return null;
     }
   }
+
+  /// Derive a JPEG poster URL from a Cloudinary video URL.
+  ///
+  /// Cloudinary lets us pluck a single frame out of a video without uploading
+  /// anything separately — splice the `so_0/` (start-offset 0 seconds)
+  /// transformation right after `/video/upload/` and swap the trailing
+  /// `.mp4` / `.mov` / `.webm` extension for `.jpg`. Result:
+  ///
+  ///   https://res.cloudinary.com/diqeeznan/video/upload/v1234/posts/abc.mp4
+  ///   → https://res.cloudinary.com/diqeeznan/video/upload/so_0/v1234/posts/abc.jpg
+  ///
+  /// Returns `null` for empty / non-http / non-Cloudinary-video URLs so callers
+  /// can decide their own fallback (we use this to backfill `thumbnailUrl`
+  /// on legacy video posts that pre-date the new Firestore field).
+  static String? videoThumbnailUrl(String videoUrl) {
+    if (videoUrl.isEmpty) return null;
+    if (!videoUrl.startsWith('http')) return null;
+    const marker = '/video/upload/';
+    final idx = videoUrl.indexOf(marker);
+    if (idx < 0) return null;
+
+    // Splice `so_0/` directly after `/video/upload/`.
+    final head = videoUrl.substring(0, idx + marker.length);
+    final tail = videoUrl.substring(idx + marker.length);
+    var withSo = '${head}so_0/$tail';
+
+    // Swap a known video extension for `.jpg`. Strip query string first so
+    // we don't trip on `?ts=...` style suffixes.
+    final qIdx = withSo.indexOf('?');
+    final beforeQ = qIdx < 0 ? withSo : withSo.substring(0, qIdx);
+    final afterQ = qIdx < 0 ? '' : withSo.substring(qIdx);
+    final lower = beforeQ.toLowerCase();
+    String swapped = beforeQ;
+    for (final ext in const ['.mp4', '.mov', '.webm', '.m4v', '.avi']) {
+      if (lower.endsWith(ext)) {
+        swapped = beforeQ.substring(0, beforeQ.length - ext.length) + '.jpg';
+        break;
+      }
+    }
+    // If no known extension, append `.jpg` — Cloudinary will still resolve
+    // the asset and convert.
+    if (swapped == beforeQ && !lower.endsWith('.jpg')) {
+      swapped = '$beforeQ.jpg';
+    }
+    return '$swapped$afterQ';
+  }
 }

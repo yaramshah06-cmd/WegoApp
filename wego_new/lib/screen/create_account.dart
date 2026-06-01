@@ -316,6 +316,25 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
         'levelUpdatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
+      // Default privacy settings — sirf tab create karo jab pehle se na ho.
+      // PrivacyProvider isi doc ko live-listen karta hai.
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('privacy')
+          .doc('settings')
+          .set({
+        'lastSeenOpt': 'everyone',
+        'customLastSeen': null,
+        'hideOnline': false,
+        'hideLastSeen': false,
+        'blueTick': false,
+        'groupOpt': 'everyone',
+        'bioOpt': 'everyone',
+        'visibleToUsers': <String>[],
+        'createdAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
       debugPrint('✅ User saved with Level 1: $uid');
       return true;
     } catch (e) {

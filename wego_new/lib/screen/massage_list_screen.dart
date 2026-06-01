@@ -4,8 +4,11 @@ import 'package:wego_marriage/services/message_badge_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:wego_marriage/providers/chat_provider.dart';
+import 'package:wego_marriage/providers/privacy_provider.dart';
 import 'package:wego_marriage/screen/user_profile_screen.dart';
 import 'package:wego_marriage/screen/chat_screen.dart';
+import 'package:wego_marriage/widgets/latest_badge_chip.dart';
+import 'package:wego_marriage/screen/privacy_setting.dart';
 import 'app_localizations.dart';
 import 'app_translations.dart';
 
@@ -269,7 +272,9 @@ class _MessageListScreenState extends State<MessageListScreen> {
 
   void _deleteChat(ChatUser chat) {
     final chatProvider = context.read<ChatProvider>();
-    chatProvider.deleteChat(chat.name);
+    // ✅ Persistent hide — RTDB par mark hota hai, logout/login ke baad
+    //    bhi chat list mein wapas nahi aati.
+    chatProvider.hideChat(chat.id);
     setState(() => _archivedChats.remove(chat.name));
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(_t(context, 'chat_deleted'))),
@@ -283,7 +288,8 @@ class _MessageListScreenState extends State<MessageListScreen> {
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(_t(context, 'user_blocked').replaceAll('%s', chat.name)),
+        content:
+        Text(_t(context, 'user_blocked').replaceAll('%s', chat.name)),
       ),
     );
   }
@@ -292,7 +298,8 @@ class _MessageListScreenState extends State<MessageListScreen> {
     setState(() => _blockedUsers.remove(chat.name));
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(_t(context, 'user_unblocked').replaceAll('%s', chat.name)),
+        content:
+        Text(_t(context, 'user_unblocked').replaceAll('%s', chat.name)),
       ),
     );
   }
@@ -308,11 +315,13 @@ class _MessageListScreenState extends State<MessageListScreen> {
     );
   }
 
+  // ── Build ─────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final Color textColor = isDark ? Colors.white : Colors.black87;
-    final Color secondaryTextColor = isDark ? Colors.white70 : Colors.black54;
+    final Color secondaryTextColor =
+    isDark ? Colors.white70 : Colors.black54;
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
@@ -340,7 +349,10 @@ class _MessageListScreenState extends State<MessageListScreen> {
             child: CustomScrollView(
               physics: const BouncingScrollPhysics(),
               slivers: [
-                SliverToBoxAdapter(child: _buildHeader(textColor, context)),
+                // ── Header ──────────────────────────────────────
+                SliverToBoxAdapter(
+                    child: _buildHeader(textColor, context)),
+
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
@@ -354,14 +366,17 @@ class _MessageListScreenState extends State<MessageListScreen> {
                     ),
                   ),
                 ),
-                SliverToBoxAdapter(child: _buildActivities(textColor)),
+                SliverToBoxAdapter(
+                    child: _buildActivities(textColor)),
+
                 if (_archivedChats.isNotEmpty)
                   SliverToBoxAdapter(
                     child: GestureDetector(
-                      onTap: () => setState(
-                              () => _showArchivedChats = !_showArchivedChats),
+                      onTap: () => setState(() =>
+                      _showArchivedChats = !_showArchivedChats),
                       child: Container(
-                        margin: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                        margin:
+                        const EdgeInsets.fromLTRB(16, 8, 16, 12),
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
                           color: isDark
@@ -419,7 +434,8 @@ class _MessageListScreenState extends State<MessageListScreen> {
                   Consumer<ChatProvider>(
                     builder: (context, chatProvider, child) {
                       final archivedChatList = chatProvider.chats
-                          .where((chat) => _archivedChats.contains(chat.name))
+                          .where((chat) =>
+                          _archivedChats.contains(chat.name))
                           .toList();
                       return SliverList(
                         delegate: SliverChildBuilderDelegate(
@@ -430,7 +446,8 @@ class _MessageListScreenState extends State<MessageListScreen> {
                               textColor: textColor,
                               secondaryTextColor: secondaryTextColor,
                               onTap: () => _onChatOpened(chat),
-                              onLongPress: () => _showChatOptions(chat),
+                              onLongPress: () =>
+                                  _showChatOptions(chat),
                             );
                           },
                           childCount: archivedChatList.length,
@@ -441,7 +458,8 @@ class _MessageListScreenState extends State<MessageListScreen> {
 
                 SliverToBoxAdapter(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
+                    padding:
+                    const EdgeInsets.fromLTRB(16, 16, 16, 6),
                     child: Text(
                       _t(context, 'messages_title'),
                       style: TextStyle(
@@ -470,7 +488,8 @@ class _MessageListScreenState extends State<MessageListScreen> {
                             textColor: textColor,
                             secondaryTextColor: secondaryTextColor,
                             onTap: () => _onChatOpened(chat),
-                            onLongPress: () => _showChatOptions(chat),
+                            onLongPress: () =>
+                                _showChatOptions(chat),
                           );
                         },
                         childCount: visibleChats.length,
@@ -478,7 +497,8 @@ class _MessageListScreenState extends State<MessageListScreen> {
                     );
                   },
                 ),
-                const SliverToBoxAdapter(child: SizedBox(height: 100)),
+                const SliverToBoxAdapter(
+                    child: SizedBox(height: 100)),
               ],
             ),
           ),
@@ -487,11 +507,13 @@ class _MessageListScreenState extends State<MessageListScreen> {
     );
   }
 
+  // ── Header ────────────────────────────────────────────────────
   Widget _buildHeader(Color textColor, BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       child: Row(
         children: [
+          // ── Title ──────────────────────────────────────────
           Expanded(
             child: Text(
               _t(context, 'messages_title'),
@@ -502,22 +524,64 @@ class _MessageListScreenState extends State<MessageListScreen> {
               ),
             ),
           ),
-          Container(
-            width: 46,
-            height: 46,
-            decoration: BoxDecoration(
-              border: Border.all(
-                  color: textColor.withValues(alpha: 0.1), width: 1.5),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Center(
-              child: Text(
-                '1L',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.pink.shade400,
+
+          // ── 1L Button with PrivacySettingScreen navigator ───
+          GestureDetector(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const PrivacySettingScreen(),
                 ),
+              );
+            },
+            child: Container(
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: textColor.withValues(alpha: 0.1),
+                  width: 1.5,
+                ),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Center(
+                child: Text(
+                  '1L',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.pink.shade400,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // ── Group Button ───────────────────────────────────
+          GestureDetector(
+            onTap: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Group chats coming soon'),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            },
+            child: Container(
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: textColor.withValues(alpha: 0.1),
+                  width: 1.5,
+                ),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                Icons.groups_rounded,
+                size: 22,
+                color: Colors.pink.shade400,
               ),
             ),
           ),
@@ -526,6 +590,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
     );
   }
 
+  // ── Activities Row ────────────────────────────────────────────
   Widget _buildActivities(Color textColor) {
     return SizedBox(
       height: 90,
@@ -546,7 +611,8 @@ class _MessageListScreenState extends State<MessageListScreen> {
 class _ActivityAvatar extends StatelessWidget {
   final ActivityUser user;
   final Color textColor;
-  const _ActivityAvatar({required this.user, required this.textColor});
+  const _ActivityAvatar(
+      {required this.user, required this.textColor});
 
   @override
   Widget build(BuildContext context) {
@@ -610,7 +676,8 @@ class _ActivityAvatar extends StatelessWidget {
                         color: kOnline,
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: isDark ? Colors.black : Colors.white,
+                          color:
+                          isDark ? Colors.black : Colors.white,
                           width: 2,
                         ),
                       ),
@@ -620,7 +687,8 @@ class _ActivityAvatar extends StatelessWidget {
             ),
             const SizedBox(height: 5),
             Text(user.name,
-                style: TextStyle(fontSize: 12, color: textColor)),
+                style:
+                TextStyle(fontSize: 12, color: textColor)),
           ],
         ),
       ),
@@ -653,8 +721,8 @@ class _MessageTile extends StatelessWidget {
       child: Column(
         children: [
           Padding(
-            padding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            padding: const EdgeInsets.symmetric(
+                horizontal: 16, vertical: 10),
             child: Row(
               children: [
                 GestureDetector(
@@ -670,24 +738,57 @@ class _MessageTile extends StatelessWidget {
                       ),
                     );
                   },
-                  child: Container(
-                    width: 56,
-                    height: 56,
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        colors: [Color(0xFFFF6B6B), kPrimaryBlue],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
+                  child: Stack(
+                    children: [
+                      Container(
+                        width: 56,
+                        height: 56,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: LinearGradient(
+                            colors: [Color(0xFFFF6B6B), kPrimaryBlue],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                        ),
+                        padding: const EdgeInsets.all(2),
+                        child: ClipOval(
+                          child: Image.network(
+                            chat.imageUrl,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
                       ),
-                    ),
-                    padding: const EdgeInsets.all(2),
-                    child: ClipOval(
-                      child: Image.network(
-                        chat.imageUrl,
-                        fit: BoxFit.cover,
+                      Positioned(
+                        right: 0,
+                        bottom: 0,
+                        child: StreamBuilder<bool>(
+                          stream: context
+                              .read<PrivacyProvider>()
+                              .watchShouldShowOnline(
+                                chat.userId,
+                                FirebaseAuth.instance.currentUser?.uid ?? '',
+                              ),
+                          builder: (_, snap) {
+                            if (snap.data != true) {
+                              return const SizedBox.shrink();
+                            }
+                            return Container(
+                              width: 14,
+                              height: 14,
+                              decoration: BoxDecoration(
+                                color: kOnline,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                    color:
+                                        isDark ? Colors.black : Colors.white,
+                                    width: 2),
+                              ),
+                            );
+                          },
+                        ),
                       ),
-                    ),
+                    ],
                   ),
                 ),
                 const SizedBox(width: 14),
@@ -709,9 +810,12 @@ class _MessageTile extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
+                          const SizedBox(width: 6),
+                          LatestBadgeChip(
+                              uid: chat.userId, size: 24),
                           if (chat.isPinned) ...[
                             const SizedBox(width: 6),
-                            Icon(
+                            const Icon(
                               Icons.push_pin,
                               size: 14,
                               color: kPrimaryBlue,
@@ -729,7 +833,9 @@ class _MessageTile extends StatelessWidget {
                           color: chat.isTyping
                               ? kTeal
                               : (chat.unreadCount > 0
-                              ? (isDark ? Colors.white : Colors.black)
+                              ? (isDark
+                              ? Colors.white
+                              : Colors.black)
                               : secondaryTextColor),
                           fontWeight: chat.unreadCount > 0
                               ? FontWeight.bold
@@ -750,7 +856,8 @@ class _MessageTile extends StatelessWidget {
                         fontSize: 12,
                         color: chat.unreadCount > 0
                             ? kPrimaryBlue
-                            : secondaryTextColor.withValues(alpha: 0.5),
+                            : secondaryTextColor
+                            .withValues(alpha: 0.5),
                         fontWeight: chat.unreadCount > 0
                             ? FontWeight.bold
                             : FontWeight.normal,
@@ -787,7 +894,9 @@ class _MessageTile extends StatelessWidget {
             padding: const EdgeInsets.only(left: 86),
             child: Divider(
               height: 1,
-              color: isDark ? Colors.white10 : Colors.grey.shade200,
+              color: isDark
+                  ? Colors.white10
+                  : Colors.grey.shade200,
             ),
           ),
         ],

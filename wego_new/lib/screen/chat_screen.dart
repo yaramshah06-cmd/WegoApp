@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:wego_marriage/providers/chat_provider.dart';
+import 'package:wego_marriage/providers/privacy_provider.dart';
 import 'package:gal/gal.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:http/http.dart' as http;
@@ -15,11 +16,13 @@ import 'package:wego_marriage/screen/video_call_screen.dart';
 import 'package:wego_marriage/widgets/missed_call_notification.dart';
 import '../helpers/voice_message_helper.dart';
 import 'package:wego_marriage/widgets/call_log_message.dart';
+import 'package:wego_marriage/widgets/latest_badge_chip.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:wego_marriage/screen/camera_screen.dart';
 import 'package:wego_marriage/screen/romantic_stickers.dart';
 import 'package:wego_marriage/screen/gallery_multi_select_screen.dart';
 import 'package:wego_marriage/screen/post_viewer_screen.dart';
+import 'package:wego_marriage/screen/user_profile_screen.dart';
 import 'package:wego_marriage/screen/xp_service.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:record/record.dart';
@@ -87,6 +90,10 @@ class ChatMessage {
   final String? sharedPostAuthorAvatar;
   final String? sharedPostThumbUrl;
   final bool sharedPostIsVideo;
+  // Blue tick snapshot — receiver ki blueTick privacy setting jab is
+  // message ko seen kiya gaya. `null` ka matlab field abhi RTDB mein nahi
+  // (purane messages) → fallback peer ki current setting check kare.
+  final bool? blueTickShown;
 
   ChatMessage({
     this.text,
@@ -120,6 +127,7 @@ class ChatMessage {
     this.sharedPostAuthorAvatar,
     this.sharedPostThumbUrl,
     this.sharedPostIsVideo = false,
+    this.blueTickShown,
   }) : id = id ?? DateTime.now().millisecondsSinceEpoch.toString();
 
   ChatMessage copyWith({
@@ -261,6 +269,7 @@ class ChatMessage {
       sharedPostAuthorAvatar: map['sharedPostAuthorAvatar'] as String?,
       sharedPostThumbUrl: map['sharedPostThumbUrl'] as String?,
       sharedPostIsVideo: (map['sharedPostIsVideo'] as bool?) ?? false,
+      blueTickShown: map['blueTickShown'] as bool?,
     );
   }
 }
@@ -365,6 +374,27 @@ class FirebaseChatService {
     required String chatRoomId,
     required String currentUserId,
   }) async {
+    // ✅ Pehle current user (yaani receiver, jo abhi chat khol raha hai) ki
+    //    blueTick privacy setting padho. Yeh value har seen-marked message ke
+    //    saath SNAPSHOT karke RTDB me lock kar dete hain — taake peer baad me
+    //    "Hide read receipts" toggle kare ya na kare, purane seen messages ka
+    //    blue/grey color WAHIN frozen rahe jo seen-moment par tha.
+    bool showBlueForReceiver = true;
+    try {
+      final privSnap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(currentUserId)
+          .collection('privacy')
+          .doc('settings')
+          .get();
+      if (privSnap.exists) {
+        final disabled = (privSnap.data()!['blueTick'] as bool?) ?? false;
+        showBlueForReceiver = !disabled;
+      }
+    } catch (_) {
+      // default true — purane behavior se compatible
+    }
+
     final snapshot = await _db
         .ref('chats/$chatRoomId/messages')
         .orderByChild('senderId')
@@ -379,6 +409,10 @@ class FirebaseChatService {
         updates['chats/$chatRoomId/messages/$key/status'] =
             MsgStatus.seen.index;
         updates['chats/$chatRoomId/messages/$key/isRead'] = true; // ✅ YEH ADD KARO
+        // ✅ Snapshot lock — peer ki future toggle changes purane messages
+        //    ka rang nahi badlein gi.
+        updates['chats/$chatRoomId/messages/$key/blueTickShown'] =
+            showBlueForReceiver;
       }
     });
     if (updates.isNotEmpty) {
@@ -2765,6 +2799,25 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  // Chat header (avatar / nickname / online row) tap → doosre user ka
+  // UserProfileScreen. Pehle empty onTap tha — issi se yaha se profile
+  // nahi khulta tha. `_receiverUid` chat init me set ho jata hai
+  // (initState/receiverUid resolve). Agar abhi tak resolve nahi hua to
+  // chup-chap return — profile open kaise karein bina uid ke.
+  void _openOtherUserProfile() {
+    if (_receiverUid.isEmpty) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => UserProfileScreen(
+          userId: _receiverUid,
+          username: widget.username,
+          avatarUrl: widget.avatarUrl,
+        ),
+      ),
+    );
+  }
+
   Widget _buildAppBar() {
     return Container(
       color: kPurple,
@@ -2776,46 +2829,109 @@ class _ChatScreenState extends State<ChatScreen>
                   color: Colors.white, size: 20),
               onPressed: () => Navigator.pop(context)),
           GestureDetector(
-            onTap: () {},
+            onTap: _openOtherUserProfile,
             child: Stack(
               children: [
                 ClipOval(
                     child: Image.network(widget.avatarUrl,
                         width: 40, height: 40, fit: BoxFit.cover)),
-                if (_isUserOnline)
-                  Positioned(
-                    bottom: 0,
-                    right: 0,
-                    child: Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                          color: Colors.greenAccent,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: kPurple, width: 2)),
-                    ),
+                Positioned(
+                  bottom: 0,
+                  right: 0,
+                  child: StreamBuilder<bool>(
+                    stream: context
+                        .read<PrivacyProvider>()
+                        .watchShouldShowOnline(
+                          _receiverUid,
+                          FirebaseAuth.instance.currentUser?.uid ?? '',
+                        ),
+                    builder: (_, snap) {
+                      if (snap.data != true) return const SizedBox.shrink();
+                      return Container(
+                        width: 12,
+                        height: 12,
+                        decoration: BoxDecoration(
+                            color: Colors.greenAccent,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: kPurple, width: 2)),
+                      );
+                    },
                   ),
+                ),
               ],
             ),
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(_nickname,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 17,
-                        fontWeight: FontWeight.bold)),
-                Text(
-                  _isTyping
-                      ? 'typing...'
-                      : (_isUserOnline ? 'Online' : 'Last seen recently'),
-                  style: TextStyle(
-                      color: Colors.white.withOpacity(0.8), fontSize: 12),
-                ),
-              ],
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _openOtherUserProfile,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(_nickname,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 17,
+                                fontWeight: FontWeight.bold)),
+                      ),
+                      // Latest unlocked image badge next to nickname
+                      if (_receiverUid.isNotEmpty) ...[
+                        const SizedBox(width: 6),
+                        LatestBadgeChip(uid: _receiverUid, size: 24),
+                      ],
+                    ],
+                  ),
+                  if (_isTyping)
+                    Text('typing...',
+                        style: TextStyle(
+                            color: Colors.white.withOpacity(0.8),
+                            fontSize: 12))
+                  else
+                    StreamBuilder<bool>(
+                      stream: context
+                          .read<PrivacyProvider>()
+                          .watchShouldShowOnline(
+                            _receiverUid,
+                            FirebaseAuth.instance.currentUser?.uid ?? '',
+                          ),
+                      builder: (_, onlineSnap) {
+                        if (onlineSnap.data == true) {
+                          return Text('Online',
+                              style: TextStyle(
+                                  color: Colors.white.withOpacity(0.8),
+                                  fontSize: 12));
+                        }
+                        return FutureBuilder<String>(
+                          // last seen text par re-fetch ke liye key — peer
+                          // ke offline hote hi rebuild ho jaye, latest ts pull
+                          // ho jaye.
+                          key: ValueKey(
+                              'lastSeen-${_receiverUid}-${onlineSnap.data}'),
+                          future:
+                              context.read<PrivacyProvider>().getLastSeenText(
+                                    _receiverUid,
+                                    FirebaseAuth.instance.currentUser?.uid ??
+                                        '',
+                                  ),
+                          builder: (_, lsSnap) {
+                            final text = lsSnap.data ?? '';
+                            if (text.isEmpty) return const SizedBox.shrink();
+                            return Text(text,
+                                style: TextStyle(
+                                    color: Colors.white.withOpacity(0.8),
+                                    fontSize: 12));
+                          },
+                        );
+                      },
+                    ),
+                ],
+              ),
             ),
           ),
           if (widget.isFollowedBack)
@@ -2910,6 +3026,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (msg.isMine) {
       bubble = _MyBubble(
         message: msg,
+        peerUid: _receiverUid,
         onLongPress: () => _onMessageLongPress(context, index),
         onSave: (msg.type == MsgType.image ||
             msg.type == MsgType.gif ||
@@ -3550,11 +3667,13 @@ class _MyBubble extends StatelessWidget {
   final VoidCallback onLongPress;
   final VoidCallback? onSave;
   final String bubbleStyle;
+  final String peerUid;
   const _MyBubble(
       {required this.message,
         required this.onLongPress,
         this.onSave,
-        this.bubbleStyle = 'default'});
+        this.bubbleStyle = 'default',
+        this.peerUid = ''});
 
   BorderRadius get _borderRadius {
     switch (bubbleStyle) {
@@ -3728,7 +3847,38 @@ class _MyBubble extends StatelessWidget {
       return const Icon(Icons.check, size: 14, color: Colors.grey);
     if (message.status == MsgStatus.delivered)
       return const Icon(Icons.done_all, size: 14, color: Colors.grey);
-    return const Icon(Icons.done_all, size: 14, color: Colors.blue);
+    // Read state — `blueTickShown` is a SNAPSHOT taken at the moment the
+    // receiver opened the chat. Yeh field message ke saath lock hota hai,
+    // so peer ki future toggle changes purane messages ka rang nahi
+    // badlein gi.
+    final lockedBlue = message.blueTickShown;
+    if (lockedBlue != null) {
+      return Icon(Icons.done_all,
+          size: 14, color: lockedBlue ? Colors.blue : Colors.grey);
+    }
+    // Backwards compat: agar field nahi (purane messages) to peer ki
+    // current setting check kar lo.
+    if (peerUid.isEmpty) {
+      return const Icon(Icons.done_all, size: 14, color: Colors.blue);
+    }
+    return _BlueTickGate(peerUid: peerUid);
+  }
+}
+
+class _BlueTickGate extends StatelessWidget {
+  final String peerUid;
+  const _BlueTickGate({required this.peerUid});
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<bool>(
+      future: context.read<PrivacyProvider>().showBlueTickFor(peerUid),
+      builder: (_, snap) {
+        final showBlue = snap.data ?? true;
+        return Icon(Icons.done_all,
+            size: 14, color: showBlue ? Colors.blue : Colors.grey);
+      },
+    );
   }
 }
 

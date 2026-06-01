@@ -21,7 +21,13 @@
       "Bash(powershell *)",
       "PowerShell(Get-Content *)",
       "Bash(Get-ChildItem -Path \"D:\\\\wego_marriage\\\\wego_new\" -Directory)",
-      "Bash(Select-Object Name)"
+      "Bash(Select-Object Name)",
+      "WebFetch(domain:developer.spotify.com)",
+      "WebFetch(domain:pub.dev)",
+      "Bash(git stash *)",
+      "Bash(git ls-tree *)",
+      "Bash(Get-ChildItem -Path \"D:\\\\wego_marriage\\\\wego_new\\\\lib\" -Recurse -Filter \"*.dart\")",
+      "Bash(Select-Object FullName)"
     ]
   }
 }

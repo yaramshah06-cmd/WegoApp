@@ -7,6 +7,7 @@ import 'package:wego_marriage/widgets/achievement_badge.dart' hide BadgeData;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:video_thumbnail/video_thumbnail.dart' as vt;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -53,6 +54,12 @@ class _MyProfileScreenState extends State<MyProfileScreen>
   // Live count subscriptions — follow/unfollow turant reflect karne ke liye.
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _followersSub;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _followingSub;
+  // Live reposts subscription — jab user kisi ki post repost kare (aur woh
+  // post ki `repostedBy` array mein humara uid add ho jaye), grid foran
+  // refresh ho jaye. Pehle yeh ek-shot get tha jo sirf initState pe chalta
+  // tha, isliye repost karne ke baad MyProfile tab pe wapas aane par bhi
+  // grid empty rehti thi.
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _userRepostsSub;
 
   // ── Firebase User ──
   String _firebaseName = '';
@@ -128,6 +135,7 @@ class _MyProfileScreenState extends State<MyProfileScreen>
     _levelStreamSub?.cancel();
     _followersSub?.cancel();
     _followingSub?.cancel();
+    _userRepostsSub?.cancel();
     _scrollController.dispose();
     _gaugeAnimController.dispose();
     _levelAnimController.dispose();
@@ -349,20 +357,27 @@ class _MyProfileScreenState extends State<MyProfileScreen>
   }
 
   // ── Reposts ───────────────────────────────────
-  Future<void> _loadUserReposts() async {
-    setState(() => _isLoadingReposts = true);
-    try {
-      final uid = _currentUid;
-      if (uid == null) {
-        if (mounted) setState(() { _userReposts = []; _isLoadingReposts = false; });
-        return;
-      }
-      final snap = await FirebaseFirestore.instance
-          .collection('posts')
-          .where('repostedBy', arrayContains: uid)
-          .limit(50)
-          .get();
-
+  // Live subscription on `posts where repostedBy arrayContains <me>` — har
+  // repost / un-repost tab instantly grid mein reflect ho jata hai (chahay
+  // current user kahin se bhi action kare: home feed, post detail, etc.).
+  void _loadUserReposts() {
+    _userRepostsSub?.cancel();
+    final uid = _currentUid;
+    if (uid == null) {
+      if (mounted) setState(() {
+        _userReposts = [];
+        _isLoadingReposts = false;
+      });
+      return;
+    }
+    if (mounted) setState(() => _isLoadingReposts = true);
+    _userRepostsSub = FirebaseFirestore.instance
+        .collection('posts')
+        .where('repostedBy', arrayContains: uid)
+        .limit(50)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
       final reposts = snap.docs.map((d) {
         final data = d.data();
         final ts = data['timestamp'];
@@ -388,14 +403,18 @@ class _MyProfileScreenState extends State<MyProfileScreen>
         );
       }).toList()
         ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-
+      setState(() {
+        _userReposts = reposts;
+        _isLoadingReposts = false;
+      });
+    }, onError: (e) {
+      debugPrint('Error streaming user reposts: $e');
       if (!mounted) return;
-      setState(() { _userReposts = reposts; _isLoadingReposts = false; });
-    } catch (e) {
-      debugPrint('Error loading user reposts: $e');
-      if (!mounted) return;
-      setState(() { _userReposts = []; _isLoadingReposts = false; });
-    }
+      setState(() {
+        _userReposts = [];
+        _isLoadingReposts = false;
+      });
+    });
   }
 
   // ── Profile Pic ───────────────────────────────
@@ -1092,6 +1111,12 @@ class _MyProfileScreenState extends State<MyProfileScreen>
   Widget _buildPostMedia(UserPost post) {
     final ph = Container(color: Colors.grey[300], child: Icon(post.isVideo ? Icons.videocam : Icons.image, color: Colors.grey));
     if (post.thumbnailBytes != null) return Image.memory(post.thumbnailBytes!, fit: BoxFit.cover, width: double.infinity, height: double.infinity, errorBuilder: (_, __, ___) => ph);
+    // ✅ Video posts ke liye Image.network kaam nahi karta — mp4 URL ka
+    //    poster server-side generate nahi hota. video_thumbnail se on-the-fly
+    //    pehla frame nikal kar grid tile mein dikhate hain.
+    if (post.isVideo && post.mediaPath.startsWith('http')) {
+      return _VideoTileThumbnail(videoUrl: post.mediaPath, placeholder: ph);
+    }
     if (post.mediaPath.startsWith('http')) return Image.network(post.mediaPath, fit: BoxFit.cover, width: double.infinity, height: double.infinity,
         loadingBuilder: (_, c, p) => p == null ? c : Container(color: Colors.grey[300], child: const Center(child: CircularProgressIndicator(strokeWidth: 2))),
         errorBuilder: (_, __, ___) => ph);
@@ -1450,5 +1475,99 @@ class _MyProfileTabsSectionState extends State<_MyProfileTabsSection>
       const SizedBox(height: 12),
       activeBody,
     ]);
+  }
+}
+
+// ══════════════════════════════════════════════
+//  Video tile thumbnail — pehla frame fetch karke dikhata hai.
+//  Grid scroll back kare to dobara network hit na ho is liye memory cache.
+//  Failure pe placeholder dikhata hai (warna ImageDecoder ka "rough" output
+//  aata tha jo user ko broken laga).
+// ══════════════════════════════════════════════
+class _VideoTileThumbnail extends StatefulWidget {
+  final String videoUrl;
+  final Widget placeholder;
+  const _VideoTileThumbnail({required this.videoUrl, required this.placeholder});
+
+  // Process-lifetime cache. Different posts ki alag URL → alag entry.
+  // Failed attempts ko bhi `null` cache karte hain taa ke har scroll par
+  // dobara timeout na ho.
+  static final Map<String, Uint8List?> _cache = {};
+
+  @override
+  State<_VideoTileThumbnail> createState() => _VideoTileThumbnailState();
+}
+
+class _VideoTileThumbnailState extends State<_VideoTileThumbnail> {
+  Uint8List? _bytes;
+  bool _loading = true;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final cached = _VideoTileThumbnail._cache[widget.videoUrl];
+    if (_VideoTileThumbnail._cache.containsKey(widget.videoUrl)) {
+      // Cache hit (success OR previous failure).
+      if (!mounted) return;
+      setState(() {
+        _bytes = cached;
+        _loading = false;
+        _failed = cached == null;
+      });
+      return;
+    }
+    try {
+      final bytes = await vt.VideoThumbnail.thumbnailData(
+        video: widget.videoUrl,
+        imageFormat: vt.ImageFormat.JPEG,
+        maxWidth: 240,
+        quality: 65,
+      );
+      _VideoTileThumbnail._cache[widget.videoUrl] = bytes;
+      if (!mounted) return;
+      setState(() {
+        _bytes = bytes;
+        _loading = false;
+        _failed = bytes == null;
+      });
+    } catch (e) {
+      _VideoTileThumbnail._cache[widget.videoUrl] = null;
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _failed = true;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return Container(
+        color: Colors.black54,
+        child: const Center(
+          child: SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(
+                strokeWidth: 2, color: Colors.white70),
+          ),
+        ),
+      );
+    }
+    if (_failed || _bytes == null) return widget.placeholder;
+    return Image.memory(
+      _bytes!,
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+      gaplessPlayback: true,
+      errorBuilder: (_, __, ___) => widget.placeholder,
+    );
   }
 }

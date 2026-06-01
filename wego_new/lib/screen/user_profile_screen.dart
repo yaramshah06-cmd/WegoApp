@@ -2,8 +2,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:wego_marriage/services/notification_service.dart';
+import 'package:provider/provider.dart';
+import 'package:wego_marriage/providers/privacy_provider.dart';
+import 'package:wego_marriage/services/follow_controller.dart';
 import 'package:wego_marriage/widgets/level_badge.dart';
+import 'package:wego_marriage/widgets/latest_badge_chip.dart';
 import 'app_localizations.dart';
 import 'app_translations.dart';
 import 'chat_screen.dart';
@@ -29,8 +32,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   final ScrollController _scrollController = ScrollController();
 
   bool _isLoading = true;
-  bool _isFollowing = false;
-  bool _isFollowLoading = false;
+  // Does target user follow me? Drives the "Follow back" label.
+  bool _followsMe = false;
+  StreamSubscription<bool>? _followsMeSub;
+
+  // Shared follow-state notifier (from FollowController). Button area
+  // ValueListenableBuilder se rebuild hota hai — poora ListView nahi —
+  // isliye follow tap par koi "lag" / refresh feel nahi hoti.
+  ValueNotifier<bool>? _followNotifier;
 
   Map<String, dynamic> _userData = {};
   List<Map<String, dynamic>> _userPosts = [];
@@ -40,9 +49,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   // Live count + follow-status subs — UI ko bina refresh kiye update karne ke liye.
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _followersSub;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _followingSub;
-  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _followStatusSub;
-
-  String? get _currentUid => FirebaseAuth.instance.currentUser?.uid;
 
   String get _targetUserId =>
       widget.userId.isNotEmpty ? widget.userId : widget.username;
@@ -57,7 +63,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   void dispose() {
     _followersSub?.cancel();
     _followingSub?.cancel();
-    _followStatusSub?.cancel();
+    _followsMeSub?.cancel();
     _scrollController.dispose();
     super.dispose();
   }
@@ -88,22 +94,24 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     }, onError: (_) {});
   }
 
-  // ── Live follow-status: current user ka follow flag bhi stream se aata hai
-  //    taaki dusre device se follow/unfollow karne par yahan bhi turant dikhe.
+  // ── Live follow-status via shared FollowController — home feed, comments,
+  //    notifications sab same notifier listen karte hain, isliye yahan follow
+  //    karte hi har screen pe pill flip ho jata hai (aur vice versa).
   void _attachLiveFollowStatus(String targetUid) {
-    final me = _currentUid;
-    if (me == null) return;
-    _followStatusSub?.cancel();
-    _followStatusSub = FirebaseFirestore.instance
-        .collection('users')
-        .doc(targetUid)
-        .collection('followers')
-        .doc(me)
-        .snapshots()
-        .listen((snap) {
+    // No addListener here — the button uses ValueListenableBuilder so it
+    // rebuilds isolated from the surrounding ListView. Yeh "follow tap par
+    // lag/refresh" feel hata deta hai.
+    _followNotifier = FollowController.instance.notifier(targetUid);
+    FollowController.instance.watch(targetUid);
+
+    // "Follow back" label ke liye target → me reverse-edge bhi live track.
+    _followsMeSub?.cancel();
+    _followsMeSub = FollowController.instance
+        .followsMeStream(targetUid)
+        .listen((v) {
       if (!mounted) return;
-      setState(() => _isFollowing = snap.exists);
-    }, onError: (_) {});
+      setState(() => _followsMe = v);
+    });
   }
 
   Future<void> _loadAllData() async {
@@ -250,123 +258,73 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   // get karne ki zaroorat nahi.
   Future<void> _checkFollowStatus() async {}
 
-  Future<void> _toggleFollow() async {
-    final currentUid = _currentUid;
-    if (currentUid == null || _targetUserId.isEmpty) return;
-
-    // 1) OPTIMISTIC UI: button + count foran flip karo, network baad mein.
-    final wasFollowing = _isFollowing;
-    setState(() {
-      _isFollowing = !wasFollowing;
-      _followersCount = wasFollowing
-          ? (_followersCount - 1).clamp(0, 999999)
-          : _followersCount + 1;
-    });
-
-    final targetFollowersRef = FirebaseFirestore.instance
-        .collection('users')
-        .doc(_targetUserId)
-        .collection('followers')
-        .doc(currentUid);
-
-    final myFollowingRef = FirebaseFirestore.instance
-        .collection('users')
-        .doc(currentUid)
-        .collection('following')
-        .doc(_targetUserId);
-
-    try {
-      // 2) PARALLEL writes — do sequential awaits ki jagah ek round-trip.
-      if (wasFollowing) {
-        await Future.wait([
-          targetFollowersRef.delete(),
-          myFollowingRef.delete(),
-        ]);
-      } else {
-        await Future.wait([
-          targetFollowersRef.set({
-            'uid': currentUid,
-            'followedAt': FieldValue.serverTimestamp(),
-          }),
-          myFollowingRef.set({
-            'uid': _targetUserId,
-            'followedAt': FieldValue.serverTimestamp(),
-          }),
-        ]);
-        // Target ko notification — fire-and-forget.
-        unawaited(NotificationService.notifyFollow(targetUid: _targetUserId));
-      }
-    } catch (e) {
-      // Rollback on failure so UI doesn't lie.
-      debugPrint('Toggle follow error: $e');
-      if (mounted) {
-        setState(() {
-          _isFollowing = wasFollowing;
-          _followersCount = wasFollowing
-              ? _followersCount + 1
-              : (_followersCount - 1).clamp(0, 999999);
-        });
-      }
-    }
+  void _toggleFollow() {
+    if (_targetUserId.isEmpty) return;
+    // FollowController.toggle is already optimistic: notifier flips
+    // synchronously before any Firestore write. So we do NOT await here —
+    // fire-and-forget keeps the tap from feeling like a "loading"
+    // transaction even on slow networks.
+    // ignore: discarded_futures
+    FollowController.instance.toggle(_targetUserId);
   }
 
   void _navigateToChat() {
     final photoUrl = (_userData['photoUrl'] as String? ?? '').isNotEmpty
         ? _userData['photoUrl'] as String
         : widget.avatarUrl;
+    // CRITICAL: receiverUid hamesha pass karo — warna ChatScreen `username`
+    // se UID dhundta hai, aur agar Firestore `users` collection mein woh
+    // `username` field exactly match na ho (e.g. display name pass hua), to
+    // `_isLoadingReceiver` permanently `true` rehta hai aur screen loading
+    // mein latki rehti hai.
+    // _userData['id'] _fetchUserData mein doc.id se merge hota hai → asal
+    // Firebase UID. Fallback widget.userId, phir username (last resort).
+    final receiverUid = (_userData['id'] as String?) ??
+        (_userData['uid'] as String?) ??
+        (widget.userId.isNotEmpty ? widget.userId : widget.username);
 
+    // Existing conversation ka detection ChatScreen ke andar already hota
+    // hai — getChatRoomId(currentUid, receiverUid) deterministic hai
+    // (UIDs sort karke join), aur _listenToMessages us room ki history
+    // stream karta hai. Yaani agar pehle se baat ki hai to messages
+    // automatically wahin se aagey continue honge.
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => ChatScreen(
           username: widget.username,
           avatarUrl: photoUrl,
+          receiverUid: receiverUid,
         ),
       ),
     );
   }
 
   void _navigateToPostDetail(int index) {
-    final imageUrls =
-    _userPosts.map((p) => p['imageUrl'] as String? ?? '').toList();
-    final photoUrl = (_userData['photoUrl'] as String? ?? '').isNotEmpty
-        ? _userData['photoUrl'] as String
-        : widget.avatarUrl;
-
+    // PostDetailView ab raw Firestore maps leta hai aur har page par
+    // InstagramStylePostCard render karta hai → asli likes/comments/poll/
+    // hashtags/repost/save sab kaam karte hain (no more fake data).
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => PostDetailView(
-          imageUrls: imageUrls,
+          postDocs: _userPosts,
           initialIndex: index,
-          username: widget.username,
-          avatarUrl: photoUrl,
+          headerTitle: context.tr('posts'),
         ),
       ),
     );
   }
 
-  // Reposts tile tap: re-use PostDetailView with the reposts list. Original
-  // author info is on each repost doc — pehle wahi prefer karte hain, warna
-  // profile owner ka name fallback.
+  // Reposts tile tap: same PostDetailView, reposts list pass karte hain.
   void _navigateToRepostDetail(int index) {
-    final imageUrls =
-        _userReposts.map((p) => p['imageUrl'] as String? ?? '').toList();
-    final p = _userReposts[index];
-    final author = (p['username'] as String? ?? '').isNotEmpty
-        ? p['username'] as String
-        : widget.username;
-    final avatar = (p['photoUrl'] as String? ?? '').isNotEmpty
-        ? p['photoUrl'] as String
-        : widget.avatarUrl;
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => PostDetailView(
-          imageUrls: imageUrls,
+          postDocs: _userReposts,
           initialIndex: index,
-          username: author,
-          avatarUrl: avatar,
+          headerTitle: context.tr('reposts'),
         ),
       ),
     );
@@ -491,20 +449,31 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                       ),
                     ),
                   ),
-                  // Online indicator
+                  // Online indicator — privacy-gated, real-time.
                   Positioned(
                     bottom: 8,
                     right: 8,
-                    child: Container(
-                      width: 18,
-                      height: 18,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF3DDC84),
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                            color: theme.scaffoldBackgroundColor,
-                            width: 3),
-                      ),
+                    child: StreamBuilder<bool>(
+                      stream: context
+                          .read<PrivacyProvider>()
+                          .watchShouldShowOnline(
+                            widget.userId,
+                            FirebaseAuth.instance.currentUser?.uid ?? '',
+                          ),
+                      builder: (_, snap) {
+                        if (snap.data != true) return const SizedBox.shrink();
+                        return Container(
+                          width: 18,
+                          height: 18,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF3DDC84),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                                color: theme.scaffoldBackgroundColor,
+                                width: 3),
+                          ),
+                        );
+                      },
                     ),
                   ),
                 ],
@@ -520,6 +489,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                     : widget.username,
                 size: LevelBadgeSize.large,
               ),
+            ),
+
+            // 🏅 Saare unlocked image badges (gold/diamond/legendary etc)
+            // ek line mein — jaise my_profile mein dikhte hain.
+            UnlockedBadgesRow(
+              uid: widget.userId.isNotEmpty
+                  ? widget.userId
+                  : widget.username,
             ),
 
             const SizedBox(height: 12),
@@ -548,87 +525,98 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               ),
             ),
 
-            // Bio
-            if (bio.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 40),
-                child: Text(
-                  bio,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: textColor.withOpacity(0.7),
-                    fontSize: 14,
-                    height: 1.5,
-                  ),
-                ),
+            // Bio — gated by viewer's permission per target user's bioOpt.
+            if (bio.isNotEmpty)
+              FutureBuilder<bool>(
+                future: context.read<PrivacyProvider>().canShowBio(
+                      widget.userId,
+                      FirebaseAuth.instance.currentUser?.uid ?? '',
+                    ),
+                builder: (_, snap) {
+                  if (snap.data != true) return const SizedBox.shrink();
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 16),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 40),
+                      child: Text(
+                        bio,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: textColor.withOpacity(0.7),
+                          fontSize: 14,
+                          height: 1.5,
+                        ),
+                      ),
+                    ),
+                  );
+                },
               ),
-            ],
 
             const SizedBox(height: 24),
 
-            // Follow / Message buttons
+            // Follow / Following button + Message icon. ValueListenableBuilder
+            // se sirf button ka chip rebuild hota hai — poora page nahi —
+            // isliye tap par koi lag/refresh feel nahi hoti (FollowController
+            // optimistic flip immediately notifier ko update karta hai).
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Row(
                 children: [
                   Expanded(
-                    child: ElevatedButton(
-                      onPressed:
-                      _isFollowLoading ? null : _toggleFollow,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _isFollowing
-                            ? (isDark
-                            ? Colors.white.withOpacity(0.1)
-                            : Colors.black.withOpacity(0.05))
-                            : primaryColor,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16)),
-                        padding:
-                        const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      child: _isFollowLoading
-                          ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white))
-                          : Text(
-                        // ✅ Translated
-                        _isFollowing
-                            ? context.tr('unfollow')
-                            : context.tr('follow'),
-                        style: TextStyle(
-                          color: _isFollowing
-                              ? textColor
-                              : Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
+                    child: ValueListenableBuilder<bool>(
+                      valueListenable:
+                          _followNotifier ?? ValueNotifier<bool>(false),
+                      builder: (context, isFollowing, _) {
+                        return ElevatedButton(
+                          onPressed: _toggleFollow,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: isFollowing
+                                ? (isDark
+                                    ? Colors.white.withOpacity(0.1)
+                                    : Colors.black.withOpacity(0.05))
+                                : primaryColor,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16)),
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 14),
+                          ),
+                          child: Text(
+                            isFollowing
+                                ? context.tr('following')
+                                : (_followsMe
+                                    ? 'Follow back'
+                                    : context.tr('follow')),
+                            style: TextStyle(
+                              color: isFollowing ? textColor : Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ),
                   const SizedBox(width: 12),
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: _navigateToChat,
-                      style: OutlinedButton.styleFrom(
-                        side: BorderSide(
-                            color: primaryColor.withOpacity(0.5),
-                            width: 1.5),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16)),
-                        padding:
-                        const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      child: Text(
-                        context.tr('message'), // ✅ Translated
-                        style: TextStyle(
+                  // Message icon — quick way to start a chat with this user.
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: _navigateToChat,
+                      borderRadius: BorderRadius.circular(16),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 12),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                              color: primaryColor.withOpacity(0.5),
+                              width: 1.5),
+                        ),
+                        child: Icon(
+                          Icons.chat_bubble_outline,
                           color: primaryColor,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
+                          size: 22,
                         ),
                       ),
                     ),

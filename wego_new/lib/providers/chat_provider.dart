@@ -90,6 +90,12 @@ class ChatProvider extends ChangeNotifier {
   // ✅ Jin chats ko user ne dekh liya — listener inhe 0 pe rakhe
   final Set<String> _seenChatIds = {};
 
+  // ✅ Hidden / deleted chats — server-persisted (RTDB) per user.
+  //    Path: users/{uid}/hiddenChats/{chatRoomId} = true
+  //    Logout/login ke baad bhi chats hide rehte hain.
+  final Set<String> _hiddenChatIds = {};
+  StreamSubscription? _hiddenSubscription;
+
   List<ChatUser> get chats => _chats;
 
   // ✅ Total unread count — bottom nav badge ke liye
@@ -127,6 +133,7 @@ class ChatProvider extends ChangeNotifier {
 
     _realtimeSubscription?.cancel();
     _startPinnedListener(currentUser.uid);
+    _startHiddenListener(currentUser.uid);
 
     FirebaseDatabase.instance.ref('chats').onValue.listen((event) {
       if (!event.snapshot.exists) {
@@ -193,7 +200,40 @@ class ChatProvider extends ChangeNotifier {
     _pinnedSubscription?.cancel();
     _pinnedSubscription = null;
     _pinnedChatIds.clear();
+    _hiddenSubscription?.cancel();
+    _hiddenSubscription = null;
+    _hiddenChatIds.clear();
   }
+
+  // ══════════════════════════════════════════════════════════
+  //  Hidden chats listener — persistent delete.
+  //  Path: users/{uid}/hiddenChats/{chatRoomId} = true
+  // ══════════════════════════════════════════════════════════
+  void _startHiddenListener(String uid) {
+    _hiddenSubscription?.cancel();
+    _hiddenSubscription = FirebaseDatabase.instance
+        .ref('users/$uid/hiddenChats')
+        .onValue
+        .listen((event) {
+      _hiddenChatIds.clear();
+      if (event.snapshot.exists && event.snapshot.value != null) {
+        try {
+          final data =
+              Map<String, dynamic>.from(event.snapshot.value as Map);
+          for (final entry in data.entries) {
+            if (entry.value == true) _hiddenChatIds.add(entry.key);
+          }
+        } catch (e) {
+          debugPrint('Hidden chats parse error: $e');
+        }
+      }
+      // Local list se hidden chats hata do.
+      _chats.removeWhere((c) => _hiddenChatIds.contains(c.id));
+      notifyListeners();
+    });
+  }
+
+  bool isChatHidden(String chatRoomId) => _hiddenChatIds.contains(chatRoomId);
 
   // ══════════════════════════════════════════════════════════
   //  Pinned chats realtime listener
@@ -272,6 +312,25 @@ class ChatProvider extends ChangeNotifier {
 
     try {
       final db = FirebaseDatabase.instance;
+
+      // ✅ Race-condition fix: hidden chats wala realtime listener async hai,
+      //    aur initState me loadChats() turant call hota hai — us waqt
+      //    `_hiddenChatIds` abhi empty hota hai, isliye deleted chats wapis
+      //    list me aa jate the (logout/login ke baad). Yahan ek blocking
+      //    one-shot read karke set populate kar dete hain — filter sahi lage.
+      try {
+        final hiddenSnap =
+            await db.ref('users/${currentUser.uid}/hiddenChats').get();
+        if (hiddenSnap.exists && hiddenSnap.value != null) {
+          final m = Map<String, dynamic>.from(hiddenSnap.value as Map);
+          for (final e in m.entries) {
+            if (e.value == true) _hiddenChatIds.add(e.key);
+          }
+        }
+      } catch (e) {
+        debugPrint('Hidden chats one-shot read error: $e');
+      }
+
       final snapshot = await db.ref('chats').get();
 
       final List<ChatUser> loaded = [];
@@ -295,6 +354,10 @@ class ChatProvider extends ChangeNotifier {
           }
 
           if (otherUid.isEmpty || otherUid == currentUser.uid) continue;
+
+          // ✅ User ne yeh chat delete kar di thi — skip kar do (server side
+          //    persisted, logout/login ke baad bhi hidden rahega).
+          if (_hiddenChatIds.contains(chatRoomId)) continue;
 
           final chatData = Map<String, dynamic>.from(entry.value as Map);
           final lastMsgData = chatData['lastMessage'] != null
@@ -517,6 +580,24 @@ class ChatProvider extends ChangeNotifier {
     final currentUser = FirebaseAuth.instance.currentUser;
     if (currentUser == null) return;
 
+    // ✅ Receiver (me) ki current `blueTick` privacy setting ek baar
+    //    Firestore se le lo. Jo bhi messages abhi seen ho rahe hain,
+    //    un par yeh value lock kar denge — taaki future mein agar
+    //    blueTick toggle ho bhi, in messages ke ticks waise hi rahein.
+    bool blueTickHidden = false;
+    try {
+      final privacySnap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(currentUser.uid)
+          .collection('privacy')
+          .doc('settings')
+          .get();
+      if (privacySnap.exists) {
+        blueTickHidden =
+            (privacySnap.data()?['blueTick'] as bool?) ?? false;
+      }
+    } catch (_) {}
+
     try {
       final snapshot = await FirebaseDatabase.instance
           .ref('chats/$chatRoomId/messages')
@@ -535,6 +616,11 @@ class ChatProvider extends ChangeNotifier {
         if (senderId != currentUser.uid && status < 2) {
           updates['chats/$chatRoomId/messages/$key/status'] = 2;
           updates['chats/$chatRoomId/messages/$key/isRead'] = true;
+          // Lock blue-tick visibility on the message itself —
+          // sender side bubble isi field ko read karega, peer ki
+          // current setting nahi.
+          updates['chats/$chatRoomId/messages/$key/blueTickShown'] =
+              !blueTickHidden;
         }
       });
 
@@ -554,6 +640,49 @@ class ChatProvider extends ChangeNotifier {
   void deleteChat(String username) {
     _chats.removeWhere((chat) => chat.name == username);
     notifyListeners();
+  }
+
+  // ══════════════════════════════════════════════════════════
+  //  hideChat(chatRoomId) — PERSISTENT delete.
+  //  Sirf is user ke liye chat hide hoti hai (peer ko message
+  //  thread waise ka waisa milta hai). Logout / re-login par
+  //  bhi chat wapas nahi ati jab tak peer naya msg na bheje
+  //  (us waqt user khud unhide kar sakta hai). Naye msg ke baad
+  //  bhi chat hidden hi rahegi kyunki listener `_hiddenChatIds`
+  //  ke khilaf filter karta hai.
+  // ══════════════════════════════════════════════════════════
+  Future<void> hideChat(String chatRoomId) async {
+    if (chatRoomId.isEmpty) return;
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) return;
+
+    _hiddenChatIds.add(chatRoomId);
+    _chats.removeWhere((c) => c.id == chatRoomId);
+    notifyListeners();
+
+    try {
+      await FirebaseDatabase.instance
+          .ref('users/${currentUser.uid}/hiddenChats/$chatRoomId')
+          .set(true);
+    } catch (e) {
+      debugPrint('hideChat error: $e');
+    }
+  }
+
+  Future<void> unhideChat(String chatRoomId) async {
+    if (chatRoomId.isEmpty) return;
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) return;
+
+    _hiddenChatIds.remove(chatRoomId);
+    notifyListeners();
+    try {
+      await FirebaseDatabase.instance
+          .ref('users/${currentUser.uid}/hiddenChats/$chatRoomId')
+          .remove();
+    } catch (e) {
+      debugPrint('unhideChat error: $e');
+    }
   }
 
   @override

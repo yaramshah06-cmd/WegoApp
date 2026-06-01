@@ -57,6 +57,10 @@ dependencies:
   record: 5.0.5
   flutter_sound: ^9.2.13
   flutter_webrtc: ^0.13.0
+  # FFmpeg for mixing background music into recorded videos (TikTok-style).
+  # We use the community-maintained `_new` fork since the original
+  # ffmpeg_kit_flutter is archived as of Jan 2025.
+  ffmpeg_kit_flutter_new: ^4.1.0
   url_launcher: ^6.2.5
   socket_io_client: ^2.0.3+1
 

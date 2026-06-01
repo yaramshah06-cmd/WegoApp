@@ -14,6 +14,8 @@ import 'package:flutter/material.dart';
 
 import 'package:wego_marriage/screen/post_viewer_screen.dart';
 import 'package:wego_marriage/screen/user_profile_screen.dart';
+import 'package:wego_marriage/widgets/follow_button.dart';
+import 'package:wego_marriage/widgets/latest_badge_chip.dart';
 
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
@@ -64,6 +66,62 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
+  // Clear-all: confirmation ke baad recipient ki saari notifications
+  // permanently delete kar do. Firestore se hatengi tou logout/login ya
+  // koi bhi activity ke baad bhi wapas nahi aayengi (sirf naye events
+  // dobara aayenge). Firestore 500/batch limit ke khilaaf chunk karke
+  // delete karte hain taake 200+ docs bhi safely clear hon.
+  Future<void> _clearAllNotifications() async {
+    final uid = _uid;
+    if (uid == null) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Clear notifications'),
+        content:
+            const Text('Do you want to delete these notifications?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    try {
+      final col = _db.collection('users').doc(uid).collection('notifications');
+      while (true) {
+        final snap = await col.limit(400).get();
+        if (snap.docs.isEmpty) break;
+        final batch = _db.batch();
+        for (final d in snap.docs) {
+          batch.delete(d.reference);
+        }
+        await batch.commit();
+        if (snap.docs.length < 400) break;
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Notifications cleared')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Clear failed: $e')),
+        );
+      }
+    }
+  }
+
   String _timeAgo(Timestamp? ts) {
     if (ts == null) return '';
     final diff = DateTime.now().difference(ts.toDate());
@@ -86,10 +144,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         return 'ne aap ko follow kiya';
       case 'repost':
         return 'ne aap ki post repost ki';
+      case 'favorite':
+        return 'ne aap ki post favorite ki';
       case 'comment_like':
         return 'ne aap ki comment like ki: "$commentText"';
       case 'comment_dislike':
         return 'ne aap ki comment dislike ki: "$commentText"';
+      case 'story_like':
+        return 'ne aap ki story like ki';
       default:
         return 'ne kuch kiya';
     }
@@ -135,9 +197,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         actions: [
           if (uid != null)
             IconButton(
-              tooltip: 'Mark all read',
-              icon: const Icon(Icons.done_all),
-              onPressed: _markAllRead,
+              tooltip: 'Clear all',
+              icon: const Icon(Icons.delete_sweep_outlined),
+              onPressed: _clearAllNotifications,
             ),
         ],
       ),
@@ -177,8 +239,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     final fromUsername =
                         (d['fromUsername'] ?? 'Someone') as String;
                     final fromAvatar = (d['fromAvatar'] ?? '') as String;
+                    // Post notifications me postId/postThumbUrl hota hai;
+                    // story_like notifications me storyId/storyThumbUrl.
+                    // Trailing thumbnail aur tap behaviour dono ke liye
+                    // ek unified `thumb` chahiye — alag rakhne ki zarurat
+                    // nahi (tap handler type ke hisaab se branch karega).
                     final postId = (d['postId'] ?? '') as String;
+                    final storyId = (d['storyId'] ?? '') as String;
                     final postThumb = (d['postThumbUrl'] ?? '') as String;
+                    final storyThumb = (d['storyThumbUrl'] ?? '') as String;
+                    final thumb = postThumb.isNotEmpty ? postThumb : storyThumb;
                     final commentText = (d['commentText'] ?? '') as String;
                     final ts = d['createdAt'] as Timestamp?;
                     final isRead = (d['read'] as bool?) ?? false;
@@ -216,10 +286,24 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                                 ),
                             children: [
                               TextSpan(
-                                text: '@$fromUsername  ',
+                                text: '@$fromUsername',
                                 style: const TextStyle(
                                     fontWeight: FontWeight.w700),
                               ),
+                              if (fromUid.isNotEmpty && fromUid != uid)
+                                WidgetSpan(
+                                  alignment: PlaceholderAlignment.middle,
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 6),
+                                    child: LatestBadgeChip(
+                                      uid: fromUid,
+                                      size: 20,
+                                    ),
+                                  ),
+                                )
+                              else
+                                const TextSpan(text: '  '),
                               TextSpan(
                                   text: _actionText(type, commentText),
                                   style:
@@ -241,22 +325,43 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                             ],
                           ),
                         ),
-                        trailing: (type == 'follow' || postId.isEmpty)
+                        trailing: type == 'follow'
+                            ? (fromUid.isNotEmpty && fromUid != uid
+                                ? FollowButton(
+                                    targetUid: fromUid,
+                                    compact: true,
+                                  )
+                                : null)
+                            : (postId.isEmpty && storyId.isEmpty)
                             ? null
                             : GestureDetector(
-                                onTap: () => _openPost(
-                                  postId,
-                                  thumb: postThumb,
-                                  author: fromUsername,
-                                  avatar: fromAvatar,
-                                ),
+                                // Post notifications post viewer kholti hain;
+                                // story_like ke pass post viewer nahi hai,
+                                // is liye thumbnail tap par sirf author ki
+                                // profile khole.
+                                onTap: () {
+                                  if (postId.isNotEmpty) {
+                                    _openPost(
+                                      postId,
+                                      thumb: thumb,
+                                      author: fromUsername,
+                                      avatar: fromAvatar,
+                                    );
+                                  } else {
+                                    _openProfile(
+                                        fromUid, fromUsername, fromAvatar);
+                                  }
+                                },
                                 child: ClipRRect(
+                                  // Story thumbnails ko Insta-style portrait
+                                  // crop dena hota hai — square 44x44 ok
+                                  // chal jata hai cover fit ke saath.
                                   borderRadius: BorderRadius.circular(6),
                                   child: SizedBox(
                                     width: 44,
                                     height: 44,
-                                    child: postThumb.isNotEmpty
-                                        ? Image.network(postThumb,
+                                    child: thumb.isNotEmpty
+                                        ? Image.network(thumb,
                                             fit: BoxFit.cover,
                                             errorBuilder: (_, __, ___) =>
                                                 Container(
@@ -275,14 +380,19 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                         onTap: type == 'follow'
                             ? () => _openProfile(
                                 fromUid, fromUsername, fromAvatar)
-                            : (postId.isEmpty
-                                ? null
-                                : () => _openPost(
+                            : postId.isNotEmpty
+                                ? () => _openPost(
                                       postId,
-                                      thumb: postThumb,
+                                      thumb: thumb,
                                       author: fromUsername,
                                       avatar: fromAvatar,
-                                    )),
+                                    )
+                                // story_like aur baqi non-post notifications
+                                // tap par sender ki profile khole.
+                                : (fromUid.isNotEmpty
+                                    ? () => _openProfile(
+                                        fromUid, fromUsername, fromAvatar)
+                                    : null),
                       ),
                     );
                   },
@@ -304,10 +414,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         return Icons.person_add_alt_1;
       case 'repost':
         return Icons.repeat;
+      case 'favorite':
+        return Icons.bookmark;
       case 'comment_like':
         return Icons.favorite;
       case 'comment_dislike':
         return Icons.thumb_down;
+      case 'story_like':
+        return Icons.favorite;
       default:
         return Icons.notifications;
     }

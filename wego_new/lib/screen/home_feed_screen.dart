@@ -11,6 +11,7 @@ import 'package:badges/badges.dart' as badges;
 import 'package:wego_marriage/providers/story_provider.dart';
 import 'package:wego_marriage/providers/chat_provider.dart';
 import 'package:wego_marriage/providers/user_provider.dart';
+import 'package:wego_marriage/providers/privacy_provider.dart';
 import 'package:wego_marriage/screen/story_screen.dart';
 import 'package:wego_marriage/screen/my_profile.dart';
 import 'package:wego_marriage/screen/notifications_screen.dart';
@@ -20,14 +21,19 @@ import 'package:wego_marriage/screen/comments_screen.dart';
 import 'package:wego_marriage/screen/chat_screen.dart';
 import 'package:wego_marriage/screen/user_profile_screen.dart';
 import 'package:wego_marriage/screen/create_content_screen.dart';
+import 'package:wego_marriage/screen/fullscreen_video_viewer.dart';
 import 'package:wego_marriage/screen/connection_secreen.dart';
 import 'package:wego_marriage/screen/search_screen.dart';
 import 'package:wego_marriage/screen/report_post_screen.dart';
 import 'package:wego_marriage/screen/xp_service.dart';
 import 'package:wego_marriage/services/local_storage_service.dart';
+import 'package:wego_marriage/services/follow_controller.dart';
+import 'package:wego_marriage/widgets/latest_badge_chip.dart';
 import 'package:wego_marriage/services/message_badge_service.dart';
 import 'package:wego_marriage/services/legendary_announcement_service.dart';
+import 'package:wego_marriage/services/cloudinary_service.dart';
 import 'package:video_player/video_player.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'app_localizations.dart';
@@ -951,10 +957,25 @@ class InstagramStylePostCard extends StatefulWidget {
 
 class InstagramStylePostCardState extends State<InstagramStylePostCard> {
   bool _isLiked = false;
-  bool _isFollowing = false;
   bool _isSaved = false;
+  // ─── Cross-screen follow-state ───────────────────────────────────────────
+  // App-wide singleton: home feed, user profile, comments, notifications sab
+  // ek hi notifier per-target share karte hain. Ek jagah follow karne pe sab
+  // jagah pill foran flip ho jata hai.
+  ValueNotifier<bool>? _followNotifier;
+
+  bool get _isFollowing => _followNotifier?.value ?? false;
+
+  void _onBusChange() {
+    if (mounted) setState(() {});
+  }
   VideoPlayerController? _videoController;
   bool _isVideoInitialized = false;
+  // Background music for photo posts. We loop the 30-sec Deezer preview while
+  // the user keeps the post on screen. Video posts don't use this — the song
+  // is already muxed into the video file by ffmpeg at upload time.
+  AudioPlayer? _songPlayer;
+  bool _songPlaying = false;
   final LocalStorageService _storage = LocalStorageService();
 
   final _firestore = FirebaseFirestore.instance;
@@ -963,19 +984,72 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
   @override
   void initState() {
     super.initState();
+    // Shared follow-state via app-wide FollowController — har screen same
+    // notifier listen karega, follow karte hi sab jagah pill foran flip.
+    _followNotifier = FollowController.instance.notifier(widget.post.userId);
+    _followNotifier!.addListener(_onBusChange);
+    FollowController.instance.watch(widget.post.userId);
     _loadPersistedState();
     if (widget.post.isVideo) _initializeVideo();
+    _maybeStartSong();
+  }
+
+  // Photo post + song chuna gaya tha → trim window par loop chalao.
+  // (Video posts mein song already file mein muxed hai, yahan kuch nahi.)
+  Future<void> _maybeStartSong() async {
+    if (widget.post.isVideo) return;
+    final url = widget.post.songPreviewUrl;
+    if (url == null || url.isEmpty) return;
+    try {
+      _songPlayer = AudioPlayer();
+      // Loop ko manually handle karte hain — endMs cross ho to startMs par seek.
+      await _songPlayer!.setReleaseMode(ReleaseMode.stop);
+      _songPlayer!.onPositionChanged.listen((d) {
+        if (!mounted || !_songPlaying) return;
+        if (d.inMilliseconds >= widget.post.songEndMs) {
+          _songPlayer!
+              .seek(Duration(milliseconds: widget.post.songStartMs));
+        }
+      });
+      _songPlayer!.onPlayerComplete.listen((_) async {
+        if (!mounted) return;
+        await _songPlayer!
+            .seek(Duration(milliseconds: widget.post.songStartMs));
+        await _songPlayer!.resume();
+      });
+      await _songPlayer!.play(UrlSource(url));
+      if (widget.post.songStartMs > 0) {
+        await _songPlayer!
+            .seek(Duration(milliseconds: widget.post.songStartMs));
+      }
+      if (mounted) setState(() => _songPlaying = true);
+    } catch (e) {
+      debugPrint('Post song play error: $e');
+    }
+  }
+
+  Future<void> _toggleSong() async {
+    final p = _songPlayer;
+    if (p == null) return;
+    try {
+      if (_songPlaying) {
+        await p.pause();
+      } else {
+        await p.resume();
+      }
+      if (mounted) setState(() => _songPlaying = !_songPlaying);
+    } catch (_) {}
   }
 
   void _loadPersistedState() async {
-    // Optimistic: local cache se turant set karo (offline-safe)
+    // Optimistic: local cache se turant set karo (offline-safe).
+    // Follow state ka seed + Firestore reconcile ab FollowController.watch
+    // handle karta hai — yahaan sirf like/save.
     _isLiked = _storage.isPostLiked(widget.post.id);
     _isSaved = _storage.isPostSaved(widget.post.id);
-    _isFollowing = _storage.isUserFollowed(widget.post.userId);
     if (mounted) setState(() {});
 
-    // Authoritative: Firestore se confirm karo — logout/re-login ke baad
-    // bhi like-state preserve rahega kyunki source of truth `likedBy` hai.
+    // Authoritative like reconcile from Firestore (source of truth = likedBy).
     final uid = _auth.currentUser?.uid;
     if (uid == null) return;
     try {
@@ -985,8 +1059,6 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
       final data = snap.data() ?? {};
       final likedBy = List<String>.from(data['likedBy'] ?? const []);
       final firestoreLiked = likedBy.contains(uid);
-
-      // Firestore say agar like hai par local mein nahi — restore karo
       if (firestoreLiked != _isLiked) {
         setState(() => _isLiked = firestoreLiked);
         await _storage.toggleLike(widget.post.id, firestoreLiked);
@@ -998,19 +1070,34 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
 
   @override
   void dispose() {
+    _followNotifier?.removeListener(_onBusChange);
     _videoController?.dispose();
+    _songPlayer?.dispose();
     super.dispose();
   }
 
   void _initializeVideo() {
-    _videoController = VideoPlayerController.networkUrl(
-      Uri.parse(widget.post.videoUrl ?? ''),
-    )..initialize().then((_) {
+    // ✅ Pehle URL validate karo — empty/null pe controller mat banao warna
+    //    `.initialize()` silently throw karta hai, _isVideoInitialized false
+    //    reh jata hai aur UI fallback Image.network(mp4Url) try karke crash
+    //    karta hai. Wahi tha "video load nahi ho raha" wala bug.
+    final url = widget.post.videoUrl;
+    if (url == null || url.isEmpty) {
+      debugPrint('Video post has no videoUrl — skipping init');
+      return;
+    }
+    _videoController = VideoPlayerController.networkUrl(Uri.parse(url));
+    _videoController!.initialize().then((_) {
       if (mounted) {
         setState(() => _isVideoInitialized = true);
         _videoController?.setLooping(true);
         _videoController?.play();
       }
+    }).catchError((e) {
+      debugPrint('Video init failed: $e');
+      // Mounted check — agar widget dispose ho gaya to no-op.
+      // _isVideoInitialized false hi rakhte hain, UI black placeholder dikhayega.
+      if (mounted) setState(() {});
     });
   }
 
@@ -1018,34 +1105,128 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
     final currentUserId = _auth.currentUser?.uid;
     if (currentUserId == null) return;
 
+    // ─ Optimistic flip ─ UI turant chamke, lekin Firestore likhne ke liye
+    //   sirf local `_isLiked` par bharosa NA karein — `likedBy` array hi
+    //   single source of truth hai. Pehle blind `FieldValue.increment(-1)`
+    //   hota tha jo user already-unliked tha to count -1 le jata tha. Ab
+    //   transaction ke andar actual array check karke delta nikalte hain.
     final newVal = !_isLiked;
     setState(() => _isLiked = newVal);
     await _storage.toggleLike(widget.post.id, newVal);
 
     final postRef = _firestore.collection('posts').doc(widget.post.id);
-    if (newVal) {
-      await postRef.update({
-        'likesCount': FieldValue.increment(1),
-        'likedBy': FieldValue.arrayUnion([currentUserId]),
+    bool serverAddedLike = false;
+    bool serverRemovedLike = false;
+    try {
+      await _firestore.runTransaction((tx) async {
+        final snap = await tx.get(postRef);
+        if (!snap.exists) return;
+        final data = snap.data() ?? {};
+        final likedBy = List<String>.from(data['likedBy'] ?? const []);
+        final rawCount = (data['likesCount'] ?? 0);
+        final currentCount =
+            rawCount is int ? rawCount : (rawCount as num).toInt();
+        final alreadyLiked = likedBy.contains(currentUserId);
+
+        if (newVal && !alreadyLiked) {
+          // Pehli baar like — count +1, array me add.
+          tx.update(postRef, {
+            'likesCount': currentCount + 1,
+            'likedBy': FieldValue.arrayUnion([currentUserId]),
+          });
+          serverAddedLike = true;
+        } else if (!newVal && alreadyLiked) {
+          // Genuine unlike — count -1 (par 0 se neeche kabhi nahi).
+          tx.update(postRef, {
+            'likesCount': currentCount > 0 ? currentCount - 1 : 0,
+            'likedBy': FieldValue.arrayRemove([currentUserId]),
+          });
+          serverRemovedLike = true;
+        }
+        // Baqi cases (already-liked + tap-to-like, ya already-unliked +
+        // tap-to-unlike) idempotent no-op — count safe rahe.
       });
+    } catch (e) {
+      debugPrint('Like toggle transaction failed: $e');
+      // Revert optimistic state on failure.
+      if (mounted) setState(() => _isLiked = !newVal);
+      await _storage.toggleLike(widget.post.id, !newVal);
+      return;
+    }
+
+    if (serverAddedLike) {
       await XPService.addXP(currentUserId, XPAction.likeKarna);
-      // Notify post author (fire-and-forget; self-action skip inside service)
       unawaited(NotificationService.notifyLike(
         postOwnerUid: widget.post.userId,
         postId: widget.post.id,
-        postThumbUrl: widget.post.postImageUrl,
+        postThumbUrl: widget.post.thumbnailUrl,
       ));
-    } else {
-      await postRef.update({
-        'likesCount': FieldValue.increment(-1),
-        'likedBy': FieldValue.arrayRemove([currentUserId]),
-      });
+    } else if (serverRemovedLike) {
+      unawaited(NotificationService.removeLike(
+        postOwnerUid: widget.post.userId,
+        postId: widget.post.id,
+      ));
     }
   }
 
-  void _toggleSave() async {
-    setState(() => _isSaved = !_isSaved);
-    await _storage.toggleSaved(widget.post.id, _isSaved);
+  // ─── Favorite (save) toggle — posts/{id}.savedBy array + count maintain.
+  //  Optimistic UI + Firestore array write + local cache mirror. Save par
+  //  post owner ko 'favorite' notification jata hai (dedupe deterministic
+  //  doc id ke through, taake 100 bar toggle pe bhi sirf 1 notification).
+  Future<void> _toggleSave() async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
+    final newVal = !_isSaved;
+    setState(() => _isSaved = newVal);
+    await _storage.toggleSaved(widget.post.id, newVal);
+
+    final postRef = _firestore.collection('posts').doc(widget.post.id);
+    // Transaction — array check kar ke delta apply karte hain, taa ke
+    // savedCount kabhi negative na ho aur duplicate save count nahi le.
+    bool serverAdded = false;
+    try {
+      await _firestore.runTransaction((tx) async {
+        final snap = await tx.get(postRef);
+        if (!snap.exists) return;
+        final data = snap.data() ?? {};
+        final savedBy = List<String>.from(data['savedBy'] ?? const []);
+        final rawCount = (data['savedCount'] ?? 0);
+        final currentCount =
+            rawCount is int ? rawCount : (rawCount as num).toInt();
+        final alreadySaved = savedBy.contains(uid);
+
+        if (newVal && !alreadySaved) {
+          tx.update(postRef, {
+            'savedCount': currentCount + 1,
+            'savedBy': FieldValue.arrayUnion([uid]),
+          });
+          serverAdded = true;
+        } else if (!newVal && alreadySaved) {
+          tx.update(postRef, {
+            'savedCount': currentCount > 0 ? currentCount - 1 : 0,
+            'savedBy': FieldValue.arrayRemove([uid]),
+          });
+        }
+      });
+    } catch (e) {
+      debugPrint('Save toggle transaction failed: $e');
+      if (mounted) setState(() => _isSaved = !newVal);
+      await _storage.toggleSaved(widget.post.id, !newVal);
+      return;
+    }
+
+    if (serverAdded) {
+      unawaited(NotificationService.notifyFavorite(
+        postOwnerUid: widget.post.userId,
+        postId: widget.post.id,
+        postThumbUrl: widget.post.thumbnailUrl,
+      ));
+    } else if (!newVal) {
+      unawaited(NotificationService.removeFavorite(
+        postOwnerUid: widget.post.userId,
+        postId: widget.post.id,
+      ));
+    }
   }
 
   // ─── Repost toggle — posts/{id}.repostedBy array maintain karte hain ───
@@ -1054,20 +1235,47 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
     final uid = _auth.currentUser?.uid;
     if (uid == null) return;
     final ref = _firestore.collection('posts').doc(widget.post.id);
-    if (currentlyReposted) {
-      await ref.update({
-        'repostsCount': FieldValue.increment(-1),
-        'repostedBy': FieldValue.arrayRemove([uid]),
+    // Transaction — repostsCount ka negative jaane se bachne ke liye aur
+    // duplicate repost taps ko idempotent rakhne ke liye.
+    bool serverAdded = false;
+    bool serverRemoved = false;
+    try {
+      await _firestore.runTransaction((tx) async {
+        final snap = await tx.get(ref);
+        if (!snap.exists) return;
+        final data = snap.data() ?? {};
+        final repostedBy = List<String>.from(data['repostedBy'] ?? const []);
+        final rawCount = (data['repostsCount'] ?? 0);
+        final currentCount =
+            rawCount is int ? rawCount : (rawCount as num).toInt();
+        final alreadyReposted = repostedBy.contains(uid);
+
+        // `currentlyReposted` UI ka guess hai; truth `alreadyReposted` hi
+        // hai. Dono mil bhi sakte hain, lekin priority truth ko.
+        if (!alreadyReposted) {
+          tx.update(ref, {
+            'repostsCount': currentCount + 1,
+            'repostedBy': FieldValue.arrayUnion([uid]),
+          });
+          serverAdded = true;
+        } else {
+          tx.update(ref, {
+            'repostsCount': currentCount > 0 ? currentCount - 1 : 0,
+            'repostedBy': FieldValue.arrayRemove([uid]),
+          });
+          serverRemoved = true;
+        }
       });
-    } else {
-      await ref.update({
-        'repostsCount': FieldValue.increment(1),
-        'repostedBy': FieldValue.arrayUnion([uid]),
-      });
+    } catch (e) {
+      debugPrint('Repost toggle transaction failed: $e');
+      return;
+    }
+
+    if (serverAdded) {
       unawaited(NotificationService.notifyRepost(
         postOwnerUid: widget.post.userId,
         postId: widget.post.id,
-        postThumbUrl: widget.post.postImageUrl,
+        postThumbUrl: widget.post.thumbnailUrl,
       ));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1077,50 +1285,24 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
           ),
         );
       }
+    } else if (serverRemoved) {
+      unawaited(NotificationService.removeRepost(
+        postOwnerUid: widget.post.userId,
+        postId: widget.post.id,
+      ));
     }
   }
 
   void _toggleFollow() async {
-    final currentUid = FirebaseAuth.instance.currentUser?.uid;
-    if (currentUid == null) return;
-    final targetUid = widget.post.userId;
-
-    setState(() => _isFollowing = !_isFollowing);
-    await _storage.toggleFollow(targetUid, _isFollowing);
-
-    if (_isFollowing) {
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(currentUid)
-          .collection('following')
-          .doc(targetUid)
-          .set({'followedAt': FieldValue.serverTimestamp()});
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(targetUid)
-          .collection('followers')
-          .doc(currentUid)
-          .set({'followedAt': FieldValue.serverTimestamp()});
-      unawaited(NotificationService.notifyFollow(targetUid: targetUid));
-    } else {
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(currentUid)
-          .collection('following')
-          .doc(targetUid)
-          .delete();
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(targetUid)
-          .collection('followers')
-          .doc(currentUid)
-          .delete();
-    }
-
-    if (mounted) {
+    final wasFollowing = _isFollowing;
+    final newState =
+        await FollowController.instance.toggle(widget.post.userId);
+    if (!mounted) return;
+    // Snackbar sirf agar user ka intent successful raha.
+    if (newState != wasFollowing) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(
-          _isFollowing
+          newState
               ? '${context.tr('following')} ${widget.post.username}'
               : '${context.tr('unfollowed')} ${widget.post.username}',
         ),
@@ -1159,7 +1341,7 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
 
     final Map<String, _ShareTarget> byUid = {};
 
-    // 1. Followed users (Firestore subcollection)
+    // 1. Followed users — PARALLEL fan-out (no more N sequential round-trips).
     try {
       final followingSnap = await _firestore
           .collection('users')
@@ -1167,14 +1349,16 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
           .collection('following')
           .get();
 
-      for (final doc in followingSnap.docs) {
-        final fUid = doc.id;
-        if (fUid == uid) continue;
-        final userDoc =
-            await _firestore.collection('users').doc(fUid).get();
+      final docsToFetch =
+          followingSnap.docs.where((d) => d.id != uid).toList();
+      final userDocs = await Future.wait(
+        docsToFetch.map((d) => _firestore.collection('users').doc(d.id).get()),
+      );
+      for (final userDoc in userDocs) {
+        if (!userDoc.exists) continue;
         final data = userDoc.data() ?? {};
-        byUid[fUid] = _ShareTarget(
-          userId: fUid,
+        byUid[userDoc.id] = _ShareTarget(
+          userId: userDoc.id,
           username: (data['username'] ??
                   data['fullName'] ??
                   data['name'] ??
@@ -1935,7 +2119,6 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
             data['turnOffCommenting'] ?? widget.post.commentsDisabled;
         final hideShareCount =
             data['hideShareCount'] ?? widget.post.hideShareCount;
-        final likesCount = data['likesCount'] ?? widget.post.likesCount;
         final shareCount = data['shareCount'] ?? 0;
 
         // ✅ Live like-state — Firestore likedBy array se aata hai, source of truth.
@@ -1948,7 +2131,24 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
         final repostedBy = List<String>.from(data['repostedBy'] ?? const []);
         final isReposted =
             currentUid != null && repostedBy.contains(currentUid);
-        final repostsCount = (data['repostsCount'] ?? 0) as int;
+        // Favorite (save) state — savedBy array, same pattern.
+        final savedBy = List<String>.from(data['savedBy'] ?? const []);
+        final liveIsSaved = currentUid != null && savedBy.contains(currentUid);
+
+        // Counts: pichli buggy `FieldValue.increment(-1)` writes ki wajah se
+        // kuch posts ka likesCount/savedCount/repostsCount negative ho gaya
+        // tha. Ab array length ko authoritative manate hain (max with stored
+        // count, never negative). Yeh display-side self-heal hai — agle write
+        // par stored count bhi sahi ho jata hai.
+        int safeCount(dynamic stored, List arr) {
+          final s = stored is num ? stored.toInt() : 0;
+          return s < 0 ? arr.length : (s > arr.length ? s : arr.length);
+        }
+        final likesCount = hideLikes
+            ? 0
+            : safeCount(data['likesCount'] ?? widget.post.likesCount, likedBy);
+        final repostsCount = safeCount(data['repostsCount'], repostedBy);
+        final savedCount = safeCount(data['savedCount'], savedBy);
         // Local state ko stream ke saath sync rakho (UI consistency).
         // ⚠️ Guard: agar snapshot empty/cache-only hai (offline ya pehli load
         // se pehle), to local cache ko overwrite mat karo — warna flicker se
@@ -1964,6 +2164,15 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
             }
           });
         }
+        // Same reconcile for favorite (save) — Firestore source of truth.
+        if (hasRealData && liveIsSaved != _isSaved) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && liveIsSaved != _isSaved) {
+              setState(() => _isSaved = liveIsSaved);
+              _storage.toggleSaved(widget.post.id, liveIsSaved);
+            }
+          });
+        }
 
         return Container(
           color: isDark ? const Color(0xFF121212) : Colors.white,
@@ -1974,53 +2183,180 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
                 padding:
                 const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
+                    // ── Avatar (+ privacy-gated online dot) ──
                     GestureDetector(
                       onTap: _navigateToProfile,
-                      child: Container(
-                        width: 42,
-                        height: 42,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                              color: const Color(0xFFDD2A7B), width: 2),
-                        ),
-                        child: ClipOval(
-                          child: Image.network(widget.post.avatarUrl,
-                              fit: BoxFit.cover,
-                              headers: const {
-                                'User-Agent':
-                                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Container(
+                            width: 42,
+                            height: 42,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                  color: const Color(0xFFDD2A7B), width: 2),
+                            ),
+                            child: ClipOval(
+                              child: Image.network(widget.post.avatarUrl,
+                                  fit: BoxFit.cover,
+                                  headers: const {
+                                    'User-Agent':
+                                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                                  },
+                                  errorBuilder: (_, __, ___) =>
+                                      const Icon(Icons.person)),
+                            ),
+                          ),
+                          Positioned(
+                            right: -1,
+                            bottom: -1,
+                            child: StreamBuilder<bool>(
+                              stream: context
+                                  .read<PrivacyProvider>()
+                                  .watchShouldShowOnline(
+                                    widget.post.userId,
+                                    _auth.currentUser?.uid ?? '',
+                                  ),
+                              builder: (_, snap) {
+                                if (snap.data != true) {
+                                  return const SizedBox.shrink();
+                                }
+                                return Container(
+                                  width: 12,
+                                  height: 12,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF44D362),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                        color: Colors.white, width: 2),
+                                  ),
+                                );
                               },
-                              errorBuilder: (_, __, ___) =>
-                              const Icon(Icons.person)),
-                        ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     const SizedBox(width: 10),
+                    // ── Name pehle, phir follow pill ──
+                    // Order: avatar → name (+badge) → follow/following pill.
+                    // User request: pill name ke "agy" nahi "pichy" aaye.
                     Expanded(
-                      child: Row(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          GestureDetector(
-                            onTap: _navigateToProfile,
-                            child: Text(widget.post.username,
-                                style: TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 14,
-                                    color: isDark
-                                        ? Colors.white
-                                        : Colors.black)),
+                          Row(
+                            children: [
+                              Flexible(
+                                child: GestureDetector(
+                                  onTap: _navigateToProfile,
+                                  child: widget.post.username.isNotEmpty
+                                      ? Text(
+                                          widget.post.username,
+                                          style: TextStyle(
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: 14,
+                                              color: isDark
+                                                  ? Colors.white
+                                                  : Colors.black),
+                                          overflow: TextOverflow.ellipsis,
+                                        )
+                                      : FutureBuilder<DocumentSnapshot>(
+                                          future: FirebaseFirestore.instance
+                                              .collection('users')
+                                              .doc(widget.post.userId)
+                                              .get(),
+                                          builder: (_, snap) {
+                                            String name = '';
+                                            if (snap.hasData &&
+                                                snap.data!.exists) {
+                                              final d = snap.data!.data()
+                                                  as Map<String, dynamic>?;
+                                              name = ((d?['username'] ??
+                                                          d?['fullName'] ??
+                                                          d?['name'] ??
+                                                          d?['displayName'] ??
+                                                          '')
+                                                      .toString())
+                                                  .trim();
+                                            }
+                                            return Text(
+                                              name.isEmpty ? 'User' : name,
+                                              style: TextStyle(
+                                                  fontWeight: FontWeight.w600,
+                                                  fontSize: 14,
+                                                  color: isDark
+                                                      ? Colors.white
+                                                      : Colors.black),
+                                              overflow: TextOverflow.ellipsis,
+                                            );
+                                          },
+                                        ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              LatestBadgeChip(
+                                uid: widget.post.userId,
+                                size: 22,
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 8),
-                          if (!_isFollowing)
-                            GestureDetector(
-                              onTap: _toggleFollow,
-                              child: Container(
+                        ],
+                      ),
+                    ),
+                    // ── Follow / Following pill (ab name ke baad) ──
+                    if (_auth.currentUser?.uid != widget.post.userId) ...[
+                      const SizedBox(width: 8),
+                      GestureDetector(
+                        onTap: _toggleFollow,
+                        child: _isFollowing
+                            ? Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 5),
+                                decoration: BoxDecoration(
+                                  color: isDark
+                                      ? Colors.white.withValues(alpha: 0.08)
+                                      : const Color(0xFFF0F0F0),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(
+                                    color: isDark
+                                        ? Colors.white24
+                                        : const Color(0xFFD0D0D0),
+                                    width: 1,
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.check,
+                                        size: 13,
+                                        color: isDark
+                                            ? Colors.white70
+                                            : Colors.grey[700]),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      context.tr('following'),
+                                      style: TextStyle(
+                                          color: isDark
+                                              ? Colors.white70
+                                              : Colors.grey[700],
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            : Container(
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 12, vertical: 6),
                                 decoration: BoxDecoration(
-                                    color: const Color(0xFF0095F6),
-                                    borderRadius: BorderRadius.circular(4)),
+                                  color: const Color(0xFF0095F6),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
                                 child: Text(
                                   context.tr('follow'),
                                   style: const TextStyle(
@@ -2029,24 +2365,8 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
                                       fontWeight: FontWeight.w600),
                                 ),
                               ),
-                            )
-                          else
-                            GestureDetector(
-                              onTap: _toggleFollow,
-                              child: Row(children: [
-                                const Icon(Icons.check,
-                                    size: 16, color: Colors.grey),
-                                const SizedBox(width: 4),
-                                Text(
-                                  context.tr('following'),
-                                  style: TextStyle(
-                                      color: Colors.grey[600], fontSize: 12),
-                                ),
-                              ]),
-                            ),
-                        ],
                       ),
-                    ),
+                    ],
                     IconButton(
                         icon: Icon(Icons.more_vert,
                             color: isDark ? Colors.white : Colors.black),
@@ -2057,27 +2377,116 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
 
               GestureDetector(
                 onDoubleTap: _toggleLike,
-                child: Container(
-                  width: double.infinity,
-                  constraints: const BoxConstraints(maxHeight: 400),
-                  child: widget.post.isVideo && _isVideoInitialized
-                      ? AspectRatio(
-                      aspectRatio: _videoController!.value.aspectRatio,
-                      child: VideoPlayer(_videoController!))
-                      : Image.network(widget.post.postImageUrl,
-                      fit: BoxFit.cover,
-                      loadingBuilder: (_, child, progress) {
-                        if (progress == null) return child;
-                        return Container(
-                            height: 400,
-                            color: Colors.grey[300],
-                            child: const Center(
-                                child: CircularProgressIndicator()));
-                      },
-                      errorBuilder: (_, __, ___) => Container(
-                          height: 400,
-                          color: Colors.grey[300],
-                          child: const Icon(Icons.error))),
+                // Insta-style: video post pe single tap → fullscreen viewer
+                // khulta hai. Photo posts ke liye onTap rakha hi nahi (warna
+                // double-tap-like ko gesture arbitration thoda delay karta).
+                onTap: widget.post.isVideo
+                    ? () {
+                        // Inline player pause kar do — wapas aane par chalega.
+                        _videoController?.pause();
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => FullscreenVideoViewer(
+                              postId: widget.post.id,
+                              initialPost: widget.post,
+                            ),
+                          ),
+                        ).then((_) {
+                          if (mounted && _isVideoInitialized) {
+                            _videoController?.play();
+                          }
+                        });
+                      }
+                    : null,
+                child: Stack(
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      constraints: const BoxConstraints(maxHeight: 400),
+                      // ✅ Video posts ke liye Image.network fallback HATA diya
+                      //    hai — `postImageUrl` me mp4 URL hota tha aur Image
+                      //    decoder usko render nahi kar pata tha. Ab video
+                      //    initialize hone tak black + spinner placeholder
+                      //    dikhate hain. Photo posts ka behavior same.
+                      child: widget.post.isVideo
+                          ? (_isVideoInitialized
+                              ? AspectRatio(
+                                  aspectRatio:
+                                      _videoController!.value.aspectRatio,
+                                  child: VideoPlayer(_videoController!))
+                              : Container(
+                                  height: 400,
+                                  color: Colors.black,
+                                  child: const Center(
+                                    child: CircularProgressIndicator(
+                                      valueColor:
+                                          AlwaysStoppedAnimation<Color>(
+                                              Colors.white),
+                                    ),
+                                  ),
+                                ))
+                          : Image.network(widget.post.postImageUrl,
+                              fit: BoxFit.cover,
+                              loadingBuilder: (_, child, progress) {
+                                if (progress == null) return child;
+                                return Container(
+                                    height: 400,
+                                    color: Colors.grey[300],
+                                    child: const Center(
+                                        child:
+                                            CircularProgressIndicator()));
+                              },
+                              errorBuilder: (_, __, ___) => Container(
+                                  height: 400,
+                                  color: Colors.grey[300],
+                                  child: const Icon(Icons.error))),
+                    ),
+                    if ((widget.post.songTitle ?? '').isNotEmpty)
+                      Positioned(
+                        left: 12,
+                        bottom: 12,
+                        child: GestureDetector(
+                          onTap: _toggleSong,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.55),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _songPlaying
+                                      ? Icons.music_note
+                                      : Icons.music_off,
+                                  color: Colors.white,
+                                  size: 14,
+                                ),
+                                const SizedBox(width: 6),
+                                ConstrainedBox(
+                                  constraints: const BoxConstraints(
+                                      maxWidth: 180),
+                                  child: Text(
+                                    '${widget.post.songTitle}'
+                                    '${widget.post.songArtist != null && widget.post.songArtist!.isNotEmpty ? ' • ${widget.post.songArtist}' : ''}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
 
@@ -2226,10 +2635,28 @@ class InstagramStylePostCardState extends State<InstagramStylePostCard> {
                     const Spacer(),
                     GestureDetector(
                       onTap: _toggleSave,
-                      child: Icon(
-                        _isSaved ? Icons.bookmark : Icons.bookmark_border,
-                        color: isDark ? Colors.white : Colors.black,
-                        size: 28,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _isSaved ? Icons.bookmark : Icons.bookmark_border,
+                            color: _isSaved
+                                ? const Color(0xFF0095F6)
+                                : (isDark ? Colors.white : Colors.black),
+                            size: 28,
+                          ),
+                          if (savedCount > 0) ...[
+                            const SizedBox(width: 5),
+                            Text(
+                              '$savedCount',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: isDark ? Colors.white : Colors.black,
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                     ),
                   ],
@@ -2461,6 +2888,20 @@ class Post {
   final bool hideLikes;
   final bool commentsDisabled;
   final bool hideShareCount;
+  // ✅ Server-side video poster + author opt-in download flag. Both nullable /
+  // defaulted so legacy posts (created before these fields existed) keep working.
+  final String? thumbnailUrlRaw;
+  final bool allowDownloads;
+  // Song metadata — TikTok-style background music. For video posts the song
+  // is already muxed into the file; we still keep these for the "Sound by …"
+  // chip. For photo posts, the feed plays the previewUrl while the photo
+  // is on-screen.
+  final String? songTitle;
+  final String? songArtist;
+  final String? songPreviewUrl;
+  final String? songAlbumArt;
+  final int songStartMs;
+  final int songEndMs;
 
   Post({
     required this.id,
@@ -2478,7 +2919,36 @@ class Post {
     this.hideLikes = false,
     this.commentsDisabled = false,
     this.hideShareCount = false,
+    this.thumbnailUrlRaw,
+    this.allowDownloads = false,
+    this.songTitle,
+    this.songArtist,
+    this.songPreviewUrl,
+    this.songAlbumArt,
+    this.songStartMs = 0,
+    this.songEndMs = 30000,
   });
+
+  /// Resolved poster URL — what notifications, shared-chat cards, and the
+  /// share-sheet thumbnail download all consume.
+  ///
+  /// Priority:
+  ///   1. The `thumbnailUrl` field saved at upload (new posts).
+  ///   2. For video posts on Cloudinary without that field (legacy), derive
+  ///      a poster URL on the fly via `so_0/` transform.
+  ///   3. For image posts, the original `postImageUrl`.
+  ///   4. Empty string — caller's `errorBuilder` shows the existing placeholder.
+  ///
+  /// This is read-only; we don't mutate Firestore here.
+  String get thumbnailUrl {
+    if (thumbnailUrlRaw != null && thumbnailUrlRaw!.isNotEmpty) {
+      return thumbnailUrlRaw!;
+    }
+    if (isVideo) {
+      return CloudinaryService.videoThumbnailUrl(postImageUrl) ?? '';
+    }
+    return postImageUrl;
+  }
 
   factory Post.fromFirestore(String docId, Map<String, dynamic> data) {
     final timestamp = data['timestamp'];
@@ -2494,22 +2964,43 @@ class Post {
       }
     }
 
+    // Username: try common variants. Purane posts mein sirf `username` set
+    // hota tha; kabhi `fullName` / `name` / `displayName` ho sakta hai.
+    final rawName = (data['username'] ??
+            data['fullName'] ??
+            data['name'] ??
+            data['displayName'] ??
+            '')
+        .toString()
+        .trim();
     return Post(
       id: docId,
       userId: data['authorid'] ?? '',
-      username: data['username'] ?? 'Unknown',
+      username: rawName.isEmpty ? '' : rawName,
       avatarUrl: data['photoUrl'] ?? '',
       postImageUrl: data['imageUrl'] ?? '',
       caption: data['text'] ?? '',
       likesCount: (data['likesCount'] ?? 0) as int,
       commentsCount: (data['commentsCount'] ?? 0) as int,
       isVideo: data['isVideo'] ?? false,
-      videoUrl: data['videoUrl'],
+      // ✅ Backward compat: purane video posts ke documents me sirf `imageUrl`
+      //    set tha (Cloudinary mp4 URL). Agar `videoUrl` missing hai aur post
+      //    video hai, to `imageUrl` se fall back kar lo — VideoPlayer chal jaye.
+      videoUrl: (data['videoUrl'] as String?) ??
+          ((data['isVideo'] == true) ? (data['imageUrl'] as String?) : null),
       time: timeStr,
       isLarge: true,
       hideLikes: data['hideLikeCount'] ?? false,
       commentsDisabled: data['turnOffCommenting'] ?? false,
       hideShareCount: data['hideShareCount'] ?? false,
+      thumbnailUrlRaw: data['thumbnailUrl'] as String?,
+      allowDownloads: data['allowDownloads'] ?? false,
+      songTitle: data['songTitle'] as String?,
+      songArtist: data['songArtist'] as String?,
+      songPreviewUrl: data['songPreviewUrl'] as String?,
+      songAlbumArt: data['songAlbumArt'] as String?,
+      songStartMs: (data['songStartMs'] as num?)?.toInt() ?? 0,
+      songEndMs: (data['songEndMs'] as num?)?.toInt() ?? 30000,
     );
   }
 }
@@ -2549,9 +3040,14 @@ class _PostPollWidget extends StatelessWidget {
     final options = ((poll['options'] as List?) ?? const [])
         .map((e) => e.toString())
         .toList();
-    final votes = ((poll['votes'] as List?) ?? const [])
-        .map((e) => (e is int) ? e : int.tryParse(e.toString()) ?? 0)
-        .toList();
+    final rawVotes = poll['votes'];
+    final votes = rawVotes is List
+        ? rawVotes.map((e) => (e is int) ? e : int.tryParse(e.toString()) ?? 0).toList()
+        : rawVotes is Map
+        ? (poll['options'] as List? ?? [])
+        .map((opt) => (rawVotes[opt.toString()] ?? 0) as int)
+        .toList()
+        : <int>[];
     // pad votes to options length
     while (votes.length < options.length) {
       votes.add(0);

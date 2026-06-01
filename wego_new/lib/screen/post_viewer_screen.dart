@@ -90,7 +90,7 @@ class _PostViewerScreenState extends State<PostViewerScreen> {
       NotificationService.notifyLike(
         postOwnerUid: post.userId,
         postId: post.id,
-        postThumbUrl: post.postImageUrl,
+        postThumbUrl: post.thumbnailUrl,
       );
     }
   }
@@ -162,7 +162,7 @@ class _PostViewerScreenState extends State<PostViewerScreen> {
       NotificationService.notifyRepost(
         postOwnerUid: post.userId,
         postId: post.id,
-        postThumbUrl: post.postImageUrl,
+        postThumbUrl: post.thumbnailUrl,
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

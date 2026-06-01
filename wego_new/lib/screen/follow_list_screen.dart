@@ -59,47 +59,54 @@ class _FollowListScreenState extends State<FollowListScreen> {
         return;
       }
 
-      final List<Map<String, dynamic>> users = [];
-
-      for (final doc in subSnap.docs) {
+      // 🚀 PARALLEL FAN-OUT — sare user docs + follow-check ek saath.
+      // Pehle: 20 entries × 2 sequential round-trips = ~4-8 sec.
+      // Ab: 2 parallel batches = ~200-400 ms.
+      final futures = subSnap.docs.map((doc) async {
         final uid = doc.id;
         try {
-          final userDoc = await FirebaseFirestore.instance
-              .collection('users')
-              .doc(uid)
-              .get();
-
-          if (userDoc.exists) {
-            final data = userDoc.data()!;
-
-            bool isFollowing = false;
-            if (_currentUid != null) {
-              final followCheck = await FirebaseFirestore.instance
+          // ⚠️ Sahi check: "kya main is user ko follow karta hoon?" =
+          // users/{me}/following/{them} exist karta hai. Pehle ulta tha —
+          // users/{them}/followers/{me} dekhta tha jo sirf tab true hota
+          // jab woh mujhe follow kare. Iss bug se my-profile → following
+          // list me un users ke saamne "Follow" button dikhta tha jinhe
+          // main pehle se follow karta hoon (jo back-follow nahi karte).
+          final reads = await Future.wait([
+            FirebaseFirestore.instance.collection('users').doc(uid).get(),
+            if (_currentUid != null)
+              FirebaseFirestore.instance
                   .collection('users')
-                  .doc(uid)
-                  .collection('followers')
                   .doc(_currentUid)
-                  .get();
-              isFollowing = followCheck.exists;
-            }
+                  .collection('following')
+                  .doc(uid)
+                  .get(),
+          ]);
 
-            users.add({
-              'userId': uid,
-              'name': data['name'] ??
-                  data['displayName'] ??
-                  data['fullName'] ??
-                  data['username'] ??
-                  '',
-              'username': data['username'] ?? '',
-              'avatar': data['photoUrl'] ?? '',
-              'bio': data['bio'] ?? '',
-              'isFollowing': isFollowing,
-            });
-          }
+          final userDoc = reads[0];
+          if (!userDoc.exists) return null;
+          final data = userDoc.data()!;
+          final isFollowing =
+              reads.length > 1 && reads[1].exists;
+
+          return <String, dynamic>{
+            'userId': uid,
+            'name': data['name'] ??
+                data['displayName'] ??
+                data['fullName'] ??
+                data['username'] ??
+                '',
+            'username': data['username'] ?? '',
+            'avatar': data['photoUrl'] ?? '',
+            'bio': data['bio'] ?? '',
+            'isFollowing': isFollowing,
+          };
         } catch (e) {
           debugPrint('❌ User fetch error ($uid): $e');
+          return null;
         }
-      }
+      });
+      final results = await Future.wait(futures);
+      final users = results.whereType<Map<String, dynamic>>().toList();
 
       if (!mounted) return;
       setState(() {
@@ -133,18 +140,23 @@ class _FollowListScreenState extends State<FollowListScreen> {
           .collection('following')
           .doc(targetUid);
 
+      // PARALLEL writes — dono round-trips ek saath.
       if (isFollowing) {
-        await targetFollowersRef.delete();
-        await myFollowingRef.delete();
+        await Future.wait([
+          targetFollowersRef.delete(),
+          myFollowingRef.delete(),
+        ]);
       } else {
-        await targetFollowersRef.set({
-          'uid': _currentUid,
-          'followedAt': FieldValue.serverTimestamp(),
-        });
-        await myFollowingRef.set({
-          'uid': targetUid,
-          'followedAt': FieldValue.serverTimestamp(),
-        });
+        await Future.wait([
+          targetFollowersRef.set({
+            'uid': _currentUid,
+            'followedAt': FieldValue.serverTimestamp(),
+          }),
+          myFollowingRef.set({
+            'uid': targetUid,
+            'followedAt': FieldValue.serverTimestamp(),
+          }),
+        ]);
       }
     } catch (e) {
       debugPrint('❌ Toggle follow error: $e');

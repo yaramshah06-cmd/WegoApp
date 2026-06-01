@@ -88,6 +88,42 @@ class NotificationService {
 
   // ─── Public API ────────────────────────────────────────────────────────
 
+  // Insta-style dedupe: per (sender, post, action) ek hi notification doc
+  // rahega — like/unlike/like 100 bar karne pe spam nahi hota. Deterministic
+  // doc id: `{type}_{fromUid}_{postId}`. Set+merge har baar createdAt refresh
+  // karta hai taake list mein top par jaye aur `read=false` set ho jaye.
+  static Future<void> _addDedupedPostAction({
+    required String recipientUid,
+    required String fromUid,
+    required String type,
+    required String postId,
+    required String fromUsername,
+    required String fromAvatar,
+    String postThumbUrl = '',
+  }) async {
+    if (recipientUid.isEmpty || fromUid.isEmpty || postId.isEmpty) return;
+    if (recipientUid == fromUid) return;
+    try {
+      await _db
+          .collection('users')
+          .doc(recipientUid)
+          .collection('notifications')
+          .doc('${type}_${fromUid}_$postId')
+          .set({
+        'type': type,
+        'fromUid': fromUid,
+        'fromUsername': fromUsername,
+        'fromAvatar': fromAvatar,
+        'postId': postId,
+        'postThumbUrl': postThumbUrl,
+        'createdAt': FieldValue.serverTimestamp(),
+        'read': false,
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('NotificationService: $type write failed: $e');
+    }
+  }
+
   static Future<void> notifyLike({
     required String postOwnerUid,
     required String postId,
@@ -95,13 +131,34 @@ class NotificationService {
   }) async {
     final sender = await _resolveSender();
     if (sender == null) return;
-    await _add(postOwnerUid, sender.$1, {
-      'type': 'like',
-      'fromUsername': sender.$2,
-      'fromAvatar': sender.$3,
-      'postId': postId,
-      'postThumbUrl': postThumbUrl,
-    });
+    await _addDedupedPostAction(
+      recipientUid: postOwnerUid,
+      fromUid: sender.$1,
+      type: 'like',
+      postId: postId,
+      fromUsername: sender.$2,
+      fromAvatar: sender.$3,
+      postThumbUrl: postThumbUrl,
+    );
+  }
+
+  // Favorite (save / bookmark) — same dedupe pattern.
+  static Future<void> notifyFavorite({
+    required String postOwnerUid,
+    required String postId,
+    String postThumbUrl = '',
+  }) async {
+    final sender = await _resolveSender();
+    if (sender == null) return;
+    await _addDedupedPostAction(
+      recipientUid: postOwnerUid,
+      fromUid: sender.$1,
+      type: 'favorite',
+      postId: postId,
+      fromUsername: sender.$2,
+      fromAvatar: sender.$3,
+      postThumbUrl: postThumbUrl,
+    );
   }
 
   static Future<void> notifyComment({
@@ -198,16 +255,92 @@ class NotificationService {
     });
   }
 
+  // Follow notifications instagram-style dedupe karte hain: ek sender ka
+  // sirf ek doc rahega recipient ki subcollection mein (deterministic id
+  // `follow_{fromUid}`). Bar bar follow/unfollow karne par naya row spam
+  // nahi hota — bas `createdAt` refresh hota hai taake list mein top par
+  // aa jaye aur `read=false` set ho jaye.
   static Future<void> notifyFollow({
     required String targetUid,
   }) async {
     final sender = await _resolveSender();
     if (sender == null) return;
-    await _add(targetUid, sender.$1, {
-      'type': 'follow',
-      'fromUsername': sender.$2,
-      'fromAvatar': sender.$3,
-    });
+    final fromUid = sender.$1;
+    if (targetUid.isEmpty || fromUid.isEmpty) return;
+    if (targetUid == fromUid) return;
+    try {
+      await _db
+          .collection('users')
+          .doc(targetUid)
+          .collection('notifications')
+          .doc('follow_$fromUid')
+          .set({
+        'type': 'follow',
+        'fromUid': fromUid,
+        'fromUsername': sender.$2,
+        'fromAvatar': sender.$3,
+        'createdAt': FieldValue.serverTimestamp(),
+        'read': false,
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('NotificationService: follow write failed: $e');
+    }
+  }
+
+  // Story like notification — Insta-style dedupe per (sender, story).
+  // Doc id: `story_like_{fromUid}_{storyId}` — ek sender ka ek story par ek
+  // hi doc, like/unlike spam se bachata hai. removeStoryLike unlike par doc
+  // delete kar deta hai.
+  static Future<void> notifyStoryLike({
+    required String storyOwnerUid,
+    required String storyId,
+    String storyThumbUrl = '',
+  }) async {
+    final sender = await _resolveSender();
+    if (sender == null) return;
+    final fromUid = sender.$1;
+    if (storyOwnerUid.isEmpty || fromUid.isEmpty || storyId.isEmpty) return;
+    if (storyOwnerUid == fromUid) return;
+    try {
+      await _db
+          .collection('users')
+          .doc(storyOwnerUid)
+          .collection('notifications')
+          .doc('story_like_${fromUid}_$storyId')
+          .set({
+        'type': 'story_like',
+        'fromUid': fromUid,
+        'fromUsername': sender.$2,
+        'fromAvatar': sender.$3,
+        'storyId': storyId,
+        'storyThumbUrl': storyThumbUrl,
+        'createdAt': FieldValue.serverTimestamp(),
+        'read': false,
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('NotificationService: story_like write failed: $e');
+    }
+  }
+
+  static Future<void> removeStoryLike({
+    required String storyOwnerUid,
+    required String storyId,
+  }) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    final fromUid = user.uid;
+    if (storyOwnerUid.isEmpty || storyId.isEmpty) return;
+    if (storyOwnerUid == fromUid) return;
+    try {
+      await _db
+          .collection('users')
+          .doc(storyOwnerUid)
+          .collection('notifications')
+          .doc('story_like_${fromUid}_$storyId')
+          .delete();
+    } catch (e) {
+      debugPrint('NotificationService: story_like remove failed: $e');
+    }
   }
 
   static Future<void> notifyRepost({
@@ -217,12 +350,92 @@ class NotificationService {
   }) async {
     final sender = await _resolveSender();
     if (sender == null) return;
-    await _add(postOwnerUid, sender.$1, {
-      'type': 'repost',
-      'fromUsername': sender.$2,
-      'fromAvatar': sender.$3,
-      'postId': postId,
-      'postThumbUrl': postThumbUrl,
-    });
+    await _addDedupedPostAction(
+      recipientUid: postOwnerUid,
+      fromUid: sender.$1,
+      type: 'repost',
+      postId: postId,
+      fromUsername: sender.$2,
+      fromAvatar: sender.$3,
+      postThumbUrl: postThumbUrl,
+    );
+  }
+
+  // ─── Un-toggle removers ───────────────────────────────────────────────
+  // Jab user like/repost/favorite ko UNDO kare, hum notification doc bhi
+  // hata dete hain. Dedupe ke saath milke is se ye guarantee milti hai:
+  //   - User ne 100 bar like/unlike kiya → final state ke hisaab se
+  //     EXACTLY 1 ya 0 notification banegi.
+  //   - Badge count bhi same logic follow karega (1 ya 0).
+  static Future<void> _removePostAction({
+    required String recipientUid,
+    required String type,
+    required String postId,
+  }) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    final fromUid = user.uid;
+    if (recipientUid.isEmpty || postId.isEmpty) return;
+    if (recipientUid == fromUid) return;
+    try {
+      await _db
+          .collection('users')
+          .doc(recipientUid)
+          .collection('notifications')
+          .doc('${type}_${fromUid}_$postId')
+          .delete();
+    } catch (e) {
+      debugPrint('NotificationService: $type remove failed: $e');
+    }
+  }
+
+  static Future<void> removeLike({
+    required String postOwnerUid,
+    required String postId,
+  }) =>
+      _removePostAction(
+          recipientUid: postOwnerUid, type: 'like', postId: postId);
+
+  static Future<void> removeFavorite({
+    required String postOwnerUid,
+    required String postId,
+  }) =>
+      _removePostAction(
+          recipientUid: postOwnerUid, type: 'favorite', postId: postId);
+
+  static Future<void> removeRepost({
+    required String postOwnerUid,
+    required String postId,
+  }) =>
+      _removePostAction(
+          recipientUid: postOwnerUid, type: 'repost', postId: postId);
+
+  // ─── Comment notification remover ─────────────────────────────────────
+  // Jab user apna comment delete kare (ya post owner kisi ka comment delete
+  // kare), recipient ki notifications subcollection se us commentId waali
+  // notifications hata do — taake "ne comment kiya" wali pranali bhi saaf
+  // ho jaye.
+  static Future<void> removeCommentNotifications({
+    required String recipientUid,
+    required String commentId,
+  }) async {
+    if (recipientUid.isEmpty || commentId.isEmpty) return;
+    try {
+      final snap = await _db
+          .collection('users')
+          .doc(recipientUid)
+          .collection('notifications')
+          .where('commentId', isEqualTo: commentId)
+          .limit(50)
+          .get();
+      if (snap.docs.isEmpty) return;
+      final batch = _db.batch();
+      for (final d in snap.docs) {
+        batch.delete(d.reference);
+      }
+      await batch.commit();
+    } catch (e) {
+      debugPrint('NotificationService: comment notif cleanup failed: $e');
+    }
   }
 }

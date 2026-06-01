@@ -10,6 +10,7 @@ import 'package:wego_marriage/providers/story_provider.dart';
 import 'package:wego_marriage/providers/user_provider.dart';
 import 'package:wego_marriage/providers/settings_provider.dart';
 import 'package:wego_marriage/providers/chat_provider.dart';
+import 'package:wego_marriage/providers/privacy_provider.dart';
 import 'package:wego_marriage/screen/splash_screen.dart';
 import 'package:wego_marriage/screen/incoming_call_screen.dart';
 import 'package:wego_marriage/screen/epic_badges_screen.dart';
@@ -41,6 +42,14 @@ void main() async {
         ChangeNotifierProvider(create: (_) => StoryProvider()),
         ChangeNotifierProvider(create: (_) => SettingsProvider()),
         ChangeNotifierProvider(create: (_) => ChatProvider()),
+        // PrivacyProvider auth changes ko khud listen karta hai aur jis
+        // user ka session active hai uska `users/{uid}/privacy/settings`
+        // doc live-stream kar leta hai. Constructor ke andar bhi listener
+        // attach hota hai, plus explicit call yahan kar dete hain agar
+        // app launch ke waqt already-signed-in user ho.
+        ChangeNotifierProvider(
+          create: (_) => PrivacyProvider()..listenToPrivacySettings(),
+        ),
       ],
       child: const MyApp(),
     ),
@@ -54,7 +63,7 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends State<MyApp> {
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   final Set<String> _shownCallIds = {};
 
   StreamSubscription? _authSubscription;
@@ -63,11 +72,38 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _startCallListener();
+    // App launch par presence true mark karo. PrivacyProvider khud hi
+    // hideOnline/hideLastSeen ko respect karta hai — agar woh toggles ON
+    // hon to RTDB par presence force-false rahe gi.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      context.read<PrivacyProvider>().setOnlinePresence(true);
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // App foreground / background — presence flip karo.
+    // NOTE: `inactive` deliberately handle nahi karte — yeh keyboard pop,
+    //       notification panel pull-down, ya call screen overlay par bhi
+    //       fire hota hai, jisse online flicker hota tha. `paused` aur
+    //       `detached` hi true backgrounding indicate karte hain.
+    final ctx = navigatorKey.currentContext;
+    if (ctx == null) return;
+    final privacy = ctx.read<PrivacyProvider>();
+    if (state == AppLifecycleState.resumed) {
+      privacy.setOnlinePresence(true);
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      privacy.setOnlinePresence(false);
+    }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _authSubscription?.cancel();
     _callSubscription?.cancel();
     super.dispose();

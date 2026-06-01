@@ -9,6 +9,7 @@ import 'package:wego_marriage/providers/settings_provider.dart';
 import 'package:wego_marriage/screen/user_profile_screen.dart';
 import 'package:wego_marriage/screen/xp_service.dart';
 import 'package:wego_marriage/services/notification_service.dart';
+import 'package:wego_marriage/widgets/latest_badge_chip.dart';
 import 'app_localizations.dart';
 import 'app_translations.dart';
 
@@ -50,6 +51,11 @@ class _CommentsScreenState extends State<CommentsScreen> {
   // We pass this to itemBuilder and only update it inside the stream.
   List<QueryDocumentSnapshot<Map<String, dynamic>>> _cachedDocs = [];
 
+  // Post author UID — initState mein ek baar fetch karte hain. Iski zaroorat
+  // long-press delete check ke liye hai: post ka maalik kisi ka bhi comment
+  // delete kar sakta hai, baaki sirf apne comment delete kar sakte hain.
+  String? _postOwnerUid;
+
   String? get _uid => FirebaseAuth.instance.currentUser?.uid;
 
   CollectionReference<Map<String, dynamic>> get _commentsRef =>
@@ -57,6 +63,24 @@ class _CommentsScreenState extends State<CommentsScreen> {
 
   DocumentReference<Map<String, dynamic>> get _postRef =>
       _db.collection('posts').doc(widget.postId);
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPostOwner();
+  }
+
+  Future<void> _loadPostOwner() async {
+    try {
+      final snap = await _postRef.get();
+      final data = snap.data();
+      if (data != null && mounted) {
+        setState(() {
+          _postOwnerUid = (data['authorid'] ?? '') as String;
+        });
+      }
+    } catch (_) {/* silent */}
+  }
 
   @override
   void dispose() {
@@ -97,7 +121,12 @@ class _CommentsScreenState extends State<CommentsScreen> {
       final postData = postSnap.data();
       if (postData != null) {
         final ownerUid = (postData['authorid'] ?? '') as String;
-        final thumb = (postData['imageUrl'] ?? '') as String;
+        // ✅ Prefer the dedicated poster URL — for video posts `imageUrl` is
+        //    the raw .mp4 and won't render as an Image.network in the
+        //    notifications list (used to show a camera placeholder).
+        final thumb = ((postData['thumbnailUrl'] as String?)?.isNotEmpty == true
+            ? postData['thumbnailUrl'] as String
+            : (postData['imageUrl'] ?? '') as String);
         if (ownerUid.isNotEmpty) {
           NotificationService.notifyComment(
             postOwnerUid: ownerUid,
@@ -150,7 +179,10 @@ class _CommentsScreenState extends State<CommentsScreen> {
           String thumb = '';
           try {
             final postSnap = await _postRef.get();
-            thumb = (postSnap.data()?['imageUrl'] ?? '') as String;
+            final pd = postSnap.data();
+            thumb = ((pd?['thumbnailUrl'] as String?)?.isNotEmpty == true
+                ? pd!['thumbnailUrl'] as String
+                : (pd?['imageUrl'] ?? '') as String);
           } catch (_) {}
           NotificationService.notifyReply(
             commentOwnerUid: parentAuthorUid,
@@ -267,7 +299,10 @@ class _CommentsScreenState extends State<CommentsScreen> {
       String thumb = '';
       try {
         final postSnap = await _postRef.get();
-        thumb = (postSnap.data()?['imageUrl'] ?? '') as String;
+        final pd = postSnap.data();
+        thumb = ((pd?['thumbnailUrl'] as String?)?.isNotEmpty == true
+            ? pd!['thumbnailUrl'] as String
+            : (pd?['imageUrl'] ?? '') as String);
       } catch (_) {}
 
       if (isLike) {
@@ -293,10 +328,14 @@ class _CommentsScreenState extends State<CommentsScreen> {
   }
 
   Future<void> _deleteComment(String commentId, {bool isReply = false}) async {
+    // Children ke commentIds bhi collect kar lo — notifications cleanup mein
+    // kaam aayenge (post owner ko gayi har "ne comment kiya" notif hatani hai).
+    final childIds = <String>[];
     if (!isReply) {
       final children =
       await _commentsRef.where('parentId', isEqualTo: commentId).get();
       for (final c in children.docs) {
+        childIds.add(c.id);
         await c.reference.delete();
       }
       await _postRef.set(
@@ -311,10 +350,69 @@ class _CommentsScreenState extends State<CommentsScreen> {
     }
     await _commentsRef.doc(commentId).delete();
 
+    // Notifications cleanup — jo "comment" / "reply" / "comment_like" /
+    // "comment_dislike" notifications post owner ke paas gayi thi unhe hata
+    // do. Recipient hamesha post owner hai (parent reply ka notif comment
+    // owner ko gaya tha, par usse abhi skip — production mein chaiye to alag
+    // pass karein).
+    final ownerUid = _postOwnerUid;
+    if (ownerUid != null && ownerUid.isNotEmpty) {
+      unawaited(NotificationService.removeCommentNotifications(
+        recipientUid: ownerUid,
+        commentId: commentId,
+      ));
+      for (final cid in childIds) {
+        unawaited(NotificationService.removeCommentNotifications(
+          recipientUid: ownerUid,
+          commentId: cid,
+        ));
+      }
+    }
+
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(context.tr('comment_deleted'))),
     );
+  }
+
+  // Long-press par "Do you want to delete this comment?" popup. Post owner
+  // har comment delete kar sakta hai, baaki sirf apna. Caller ko `canDelete`
+  // pehle check karna chahiye — yeh function sirf confirmation sambhalta hai.
+  Future<void> _confirmAndDeleteComment(
+    String commentId, {
+    bool isReply = false,
+  }) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete comment'),
+        content: const Text('Do you want to delete this comment?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('No'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Yes'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    await _deleteComment(commentId, isReply: isReply);
+  }
+
+  // Helper — caller ek comment doc ke authorUid ke saath bulata hai.
+  // Returns true agar current user is comment ko delete kar sakta hai:
+  // (apna comment) OR (current user = post owner).
+  bool _canDeleteComment(String commentAuthorUid) {
+    final me = _uid;
+    if (me == null) return false;
+    if (commentAuthorUid == me) return true;
+    if (_postOwnerUid != null && _postOwnerUid == me) return true;
+    return false;
   }
 
   void _navigateToProfile(String userId, String username, String avatarUrl) {
@@ -643,10 +741,19 @@ class _CommentsScreenState extends State<CommentsScreen> {
     final showTranslated = _isTranslatedShown(id);
     final shownText = showTranslated ? (_translations[id] ?? text) : text;
 
+    final canDelete = _canDeleteComment(authorUid);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
+        GestureDetector(
+          // Long-press par delete confirmation popup. Sirf authorize users
+          // (apna comment ya post owner) ke liye trigger karte hain.
+          onLongPress: canDelete
+              ? () => _confirmAndDeleteComment(id)
+              : null,
+          behavior: HitTestBehavior.opaque,
+          child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -687,6 +794,19 @@ class _CommentsScreenState extends State<CommentsScreen> {
                               ),
                             ),
                           ),
+                          if (authorUid.isNotEmpty &&
+                              authorUid != _uid)
+                            WidgetSpan(
+                              alignment: PlaceholderAlignment.middle,
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.only(left: 6),
+                                child: LatestBadgeChip(
+                                  uid: authorUid,
+                                  size: 20,
+                                ),
+                              ),
+                            ),
                           TextSpan(
                             text: ' $shownText',
                             style: TextStyle(
@@ -755,26 +875,15 @@ class _CommentsScreenState extends State<CommentsScreen> {
                               ),
                             ),
                           ),
-                        if (authorUid == _uid)
-                          PopupMenuButton<String>(
-                            icon: Icon(Icons.more_horiz,
-                                size: 16, color: Colors.grey[600]),
-                            itemBuilder: (context) => [
-                              PopupMenuItem(
-                                value: 'delete',
-                                child: Text(context.tr('delete')),
-                              ),
-                            ],
-                            onSelected: (value) {
-                              if (value == 'delete') _deleteComment(id);
-                            },
-                          ),
+                        // 3-dot menu hata diya — ab long-press par delete
+                        // popup aata hai (_confirmAndDeleteComment).
                       ],
                     ),
                   ],
                 ),
               ),
             ],
+          ),
           ),
         ),
 
@@ -824,8 +933,14 @@ class _CommentsScreenState extends State<CommentsScreen> {
     }
 
     final isLiked = uidNow != null && displayLikedBy.contains(uidNow);
+    final canDelete = _canDeleteComment(authorUid);
 
-    return Padding(
+    return GestureDetector(
+      // Reply par bhi long-press → delete confirm popup.
+      onLongPress:
+          canDelete ? () => _confirmAndDeleteComment(id, isReply: true) : null,
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -864,6 +979,17 @@ class _CommentsScreenState extends State<CommentsScreen> {
                           ),
                         ),
                       ),
+                      if (authorUid.isNotEmpty && authorUid != _uid)
+                        WidgetSpan(
+                          alignment: PlaceholderAlignment.middle,
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: LatestBadgeChip(
+                              uid: authorUid,
+                              size: 18,
+                            ),
+                          ),
+                        ),
                       TextSpan(
                         text: ' $text',
                         style: TextStyle(
@@ -895,24 +1021,15 @@ class _CommentsScreenState extends State<CommentsScreen> {
                       activeColor: Colors.red,
                       isSmall: true,
                     ),
-                    if (authorUid == _uid)
-                      GestureDetector(
-                        onTap: () => _deleteComment(id, isReply: true),
-                        child: Text(
-                          context.tr('delete'),
-                          style: TextStyle(
-                            color: Colors.red[300],
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
+                    // Inline "delete" hata diya — ab long-press par
+                    // delete confirmation popup aata hai.
                   ],
                 ),
               ],
             ),
           ),
         ],
+      ),
       ),
     );
   }

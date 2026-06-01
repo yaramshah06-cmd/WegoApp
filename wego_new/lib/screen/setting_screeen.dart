@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../providers/settings_provider.dart';
 import 'notification_screen.dart';
 import 'password_manager.dart';
@@ -214,6 +217,29 @@ class SettingsScreen extends StatelessWidget {
           ElevatedButton(
             onPressed: () async {
               Navigator.pop(dialogContext);
+
+              // Logout se PEHLE presence offline kar do — auth.uid abhi
+              // valid hai, isliye RTDB write allowed hai. signOut ke baad
+              // RTDB rule reject kar deta.
+              final uid = FirebaseAuth.instance.currentUser?.uid;
+              if (uid != null) {
+                try {
+                  // onDisconnect cancel — taki phantom reconnect na ho.
+                  await FirebaseDatabase.instance
+                      .ref('presence/$uid')
+                      .onDisconnect()
+                      .cancel();
+                  await FirebaseDatabase.instanceFor(
+                      app: Firebase.app(),
+                      databaseURL:
+                          'https://wego-talk-default-rtdb.firebaseio.com',
+                    ).ref('presence/$uid').set({
+                    'online': false,
+                    'lastSeen': ServerValue.timestamp,
+                  });
+                } catch (_) {}
+              }
+
               await FirebaseAuth.instance.signOut();
               if (context.mounted) {
                 await context
@@ -271,9 +297,68 @@ class SettingsScreen extends StatelessWidget {
             ),
           ),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(context);
-              // TODO: Add delete account logic
+
+              final user = FirebaseAuth.instance.currentUser;
+              if (user == null) return;
+              final uid = user.uid;
+
+              try {
+                // 1. Presence ko abhi offline mark kar do — auth still valid.
+                await FirebaseDatabase.instance
+                    .ref('presence/$uid')
+                    .onDisconnect()
+                    .cancel();
+                await FirebaseDatabase.instanceFor(
+                      app: Firebase.app(),
+                      databaseURL:
+                          'https://wego-talk-default-rtdb.firebaseio.com',
+                    ).ref('presence/$uid').set({
+                  'online': false,
+                  'lastSeen': ServerValue.timestamp,
+                });
+
+                // 2. Firestore user doc delete (privacy subdoc bhi
+                //    Firestore cascade rule ke under nahi hota — explicit
+                //    delete kar dete hain).
+                await FirebaseFirestore.instance
+                    .collection('users')
+                    .doc(uid)
+                    .collection('privacy')
+                    .doc('settings')
+                    .delete()
+                    .catchError((_) {});
+                await FirebaseFirestore.instance
+                    .collection('users')
+                    .doc(uid)
+                    .delete()
+                    .catchError((_) {});
+
+                // 3. Auth user delete. Yeh recent-login require karta hai —
+                //    agar fail ho to user ko re-login bolna chahiye.
+                await user.delete();
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Delete failed: $e')),
+                  );
+                }
+                return;
+              }
+
+              if (context.mounted) {
+                await context
+                    .read<SettingsProvider>()
+                    .resetLanguageToDefault();
+              }
+              if (context.mounted) {
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(builder: (_) => const WelcomeScreen()),
+                  (route) => false,
+                );
+              }
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,

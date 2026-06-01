@@ -11,6 +11,9 @@ class StoryItem {
   final String username;
   final String avatarUrl;
   final bool isVideo;
+  // Cloudinary mp4 URL for video stories. Purane stories me sirf `imageUrl`
+  // tha (jo actually mp4 URL hota tha) — read side me fallback rakha hai.
+  final String? videoUrl;
 
   StoryItem({
     required this.id,
@@ -18,6 +21,7 @@ class StoryItem {
     required this.username,
     required this.avatarUrl,
     this.isVideo = false,
+    this.videoUrl,
   });
 }
 
@@ -166,12 +170,20 @@ class StoryProvider with ChangeNotifier {
             }
 
             final userData = userCache[uid]!;
+            final rawImageUrl = (data['imageUrl'] as String?) ?? '';
+            final rawIsVideo = (data['isVideo'] as bool?) ?? false;
+            // ✅ Backward compat: purane video stories ke docs me sirf
+            //    `imageUrl` set tha (Cloudinary mp4 URL). Naye docs me dono
+            //    `imageUrl` aur `videoUrl` set hote hain.
+            final rawVideoUrl = (data['videoUrl'] as String?) ??
+                (rawIsVideo ? rawImageUrl : null);
             final item = StoryItem(
               id: doc.id,
-              imageUrl: (data['imageUrl'] as String?) ?? '',
+              imageUrl: rawImageUrl,
               username: (userData['username'] as String?) ?? 'Unknown',
               avatarUrl: (userData['photoUrl'] as String?) ?? '',
-              isVideo: (data['isVideo'] as bool?) ?? false,
+              isVideo: rawIsVideo,
+              videoUrl: rawVideoUrl,
             );
 
             grouped.putIfAbsent(uid, () => []);

@@ -22,6 +22,10 @@ import 'xp_service.dart';
 import 'app_localizations.dart';
 import 'app_translations.dart';
 import 'my_profile.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new/return_code.dart';
+import 'music_picker_screen.dart';
 // ─── Enums ───────────────────────────────────────────────────
 enum ContentMode { post, story, reel }
 
@@ -232,6 +236,16 @@ class CreateContentScreen extends StatefulWidget {
 
 class _CreateContentScreenState extends State<CreateContentScreen> {
   late ContentMode _mode;
+  // Tracks whether the user actually picked media/text from the sheet.
+  // If false when the sheet closes, we pop this screen so the user goes
+  // straight back to Home instead of seeing the "Opening Camera" fallback.
+  bool _proceededToNext = false;
+
+  // Song selection ko sheet re-opens ke darmiyaan persist karta hai. Jab user
+  // editor se discard karke wapas aata hai, sheet dobara khulta hai — purana
+  // selected song chip mein pehle se laga hua dikhega. Sirf tab clear hota
+  // hai jab user chip ke cross (✕) button ko dabaye, ya naya song chune.
+  SongModel? _persistedSong;
 
   @override
   void initState() {
@@ -248,7 +262,14 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
       builder: (_) => _MediaPickerSheet(
         mode: _mode,
         onModeChanged: (m) => setState(() => _mode = m),
-        onMediaSelected: (file, isVideo) {
+        initialSong: _persistedSong,
+        onSongChanged: (s) => _persistedSong = s,
+        onMediaSelected: (file, isVideo, song) {
+          _proceededToNext = true;
+          // NOTE: _persistedSong yahan clear NAHI karte. Agar user editor se
+          // discard karke wapas aata hai, sheet dobara isi song ke saath
+          // khulna chahiye. CreateContentScreen jab pop ho jayega
+          // (successful post ke baad) tab _persistedSong apne aap mar jayega.
           Navigator.pop(context);
           Navigator.push(
             context,
@@ -257,42 +278,51 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
                 file: file,
                 isVideo: isVideo,
                 mode: _mode,
+                song: song,
               ),
             ),
-          );
+          ).then((_) {
+            // User came back from the editor (discard). Re-open the
+            // media picker sheet instead of showing a blank black screen.
+            if (mounted) {
+              _proceededToNext = false;
+              _showMediaPickerSheet();
+            }
+          });
         },
         onTextSelected: () {
+          _proceededToNext = true;
           Navigator.pop(context);
           Navigator.push(
             context,
             MaterialPageRoute(
               builder: (_) => _TextCreatorScreen(mode: _mode),
             ),
-          );
+          ).then((_) {
+            if (mounted) {
+              _proceededToNext = false;
+              _showMediaPickerSheet();
+            }
+          });
         },
       ),
-    );
+    ).then((_) {
+      // Sheet was dismissed (back button / swipe down) without picking
+      // anything — close CreateContentScreen so user lands on Home.
+      if (!_proceededToNext && mounted) {
+        Navigator.of(context).pop();
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    // Blank black scaffold while the bottom sheet is showing on top.
+    // No "Opening Camera / Choose Media" fallback — if the sheet closes
+    // without a selection we pop straight back to Home (see .then above).
+    return const Scaffold(
       backgroundColor: Colors.black,
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.camera_alt, color: Colors.white54, size: 60),
-            const SizedBox(height: 16),
-            Text(context.tr('opening_camera'), style: TextStyle(color: Colors.white54, fontSize: 16)),
-            const SizedBox(height: 24),
-            TextButton(
-              onPressed: _showMediaPickerSheet,
-              child: Text(context.tr('choose_media'), style: TextStyle(color: Colors.blue, fontSize: 16)),
-            ),
-          ],
-        ),
-      ),
+      body: SizedBox.shrink(),
     );
   }
 }
@@ -301,14 +331,25 @@ class _CreateContentScreenState extends State<CreateContentScreen> {
 class _MediaPickerSheet extends StatefulWidget {
   final ContentMode mode;
   final ValueChanged<ContentMode> onModeChanged;
-  final Function(XFile file, bool isVideo) onMediaSelected;
+  // Selected song (optional) is passed alongside the picked file so the
+  // editor + post-details screens can carry it through to the upload step.
+  final Function(XFile file, bool isVideo, SongModel? song) onMediaSelected;
   final VoidCallback onTextSelected;
+
+  // Discard ke baad sheet dobara open hota hai — parent jo song pehle se
+  // pick kar chuka tha woh `initialSong` ke through wapas inject karta hai.
+  // Har change (naya pick / cross) `onSongChanged` se parent ko notify hota
+  // hai taake agle re-open par bhi persist ho.
+  final SongModel? initialSong;
+  final ValueChanged<SongModel?>? onSongChanged;
 
   const _MediaPickerSheet({
     required this.mode,
     required this.onModeChanged,
     required this.onMediaSelected,
     required this.onTextSelected,
+    this.initialSong,
+    this.onSongChanged,
   });
 
   @override
@@ -330,6 +371,15 @@ class _MediaPickerSheetState extends State<_MediaPickerSheet>
   bool _isRecording = false;
   bool _alsoShareEnabled = false;
 
+  // Background music picked from MusicPickerScreen. Shown as a chip in the
+  // top-center of the picker sheet; tap to open the picker, "x" to clear.
+  SongModel? _selectedSong;
+
+  // Plays the selected song through the phone speaker while the user records,
+  // so they can lip-sync. The same song is later muxed into the final video by
+  // ffmpeg in the post-details upload step.
+  final AudioPlayer _recordingAudio = AudioPlayer();
+
   double _currentZoom = 1.0;
   double _baseZoom = 1.0;
   double _minZoom = 1.0;
@@ -339,6 +389,9 @@ class _MediaPickerSheetState extends State<_MediaPickerSheet>
   void initState() {
     super.initState();
     _mode = widget.mode;
+    // Sheet pehli baar khulay ya discard ke baad re-open ho — dono cases
+    // mein parent ka persisted song chip mein pehle se laga hua dikhega.
+    _selectedSong = widget.initialSong;
     WidgetsBinding.instance.addObserver(this);
     if (!kIsWeb) _initCamera();
   }
@@ -347,6 +400,7 @@ class _MediaPickerSheetState extends State<_MediaPickerSheet>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _cameraController?.dispose();
+    _recordingAudio.dispose();
     super.dispose();
   }
 
@@ -432,7 +486,7 @@ class _MediaPickerSheetState extends State<_MediaPickerSheet>
     setState(() => _isCapturing = true);
     try {
       final file = await _cameraController!.takePicture();
-      if (mounted) widget.onMediaSelected(file, false);
+      if (mounted) widget.onMediaSelected(file, false, _selectedSong);
     } catch (e) {
       debugPrint('Take photo error: $e');
     } finally {
@@ -447,6 +501,23 @@ class _MediaPickerSheetState extends State<_MediaPickerSheet>
       if (!audioStatus.isGranted) return;
       await _cameraController!.startVideoRecording();
       if (mounted) setState(() => _isRecording = true);
+      // TikTok-style lip-sync: agar song chuna gaya hai to recording shuru hote
+      // hi preview MP3 play karo. User isi beat par hothh hila kar lipsync
+      // karega — final video mein bhi ffmpeg yeh hi song mux karega.
+      // Trim window honor karte hain: startMs se shuru, endMs par auto-stop.
+      final song = _selectedSong;
+      if (song != null && song.previewUrl.isNotEmpty) {
+        try {
+          await _recordingAudio.stop();
+          await _recordingAudio.play(UrlSource(song.previewUrl));
+          if (song.startMs > 0) {
+            await _recordingAudio
+                .seek(Duration(milliseconds: song.startMs));
+          }
+        } catch (e) {
+          debugPrint('Recording audio play error: $e');
+        }
+      }
     } catch (e) {
       debugPrint('Start video error: $e');
     }
@@ -456,9 +527,12 @@ class _MediaPickerSheetState extends State<_MediaPickerSheet>
     if (_cameraController == null || !_isRecording) return;
     try {
       final file = await _cameraController!.stopVideoRecording();
+      try {
+        await _recordingAudio.stop();
+      } catch (_) {}
       if (mounted) {
         setState(() => _isRecording = false);
-        widget.onMediaSelected(file, true);
+        widget.onMediaSelected(file, true, _selectedSong);
       }
     } catch (e) {
       debugPrint('Stop video error: $e');
@@ -469,7 +543,9 @@ class _MediaPickerSheetState extends State<_MediaPickerSheet>
   Future<void> _pickFromGallery() async {
     if (_mode == ContentMode.reel) {
       final file = await _picker.pickVideo(source: ImageSource.gallery);
-      if (file != null && mounted) widget.onMediaSelected(file, true);
+      if (file != null && mounted) {
+        widget.onMediaSelected(file, true, _selectedSong);
+      }
     } else {
       _showPickTypeSheet();
     }
@@ -477,12 +553,16 @@ class _MediaPickerSheetState extends State<_MediaPickerSheet>
 
   Future<void> _pickImage() async {
     final file = await _picker.pickImage(source: ImageSource.gallery);
-    if (file != null && mounted) widget.onMediaSelected(file, false);
+    if (file != null && mounted) {
+      widget.onMediaSelected(file, false, _selectedSong);
+    }
   }
 
   Future<void> _pickVideo() async {
     final file = await _picker.pickVideo(source: ImageSource.gallery);
-    if (file != null && mounted) widget.onMediaSelected(file, true);
+    if (file != null && mounted) {
+      widget.onMediaSelected(file, true, _selectedSong);
+    }
   }
 
   void _showPickTypeSheet() {
@@ -659,41 +739,49 @@ class _MediaPickerSheetState extends State<_MediaPickerSheet>
             Padding(
               padding:
               const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Row(
+              child: Stack(
+                alignment: Alignment.center,
                 children: [
-                  GestureDetector(
-                    onTap: () => Navigator.pop(context),
-                    child:
-                    const Icon(Icons.close, color: Colors.white, size: 28),
+                  // Side controls: close (left), flash + flip (right).
+                  Row(
+                    children: [
+                      GestureDetector(
+                        onTap: () => Navigator.pop(context),
+                        child: const Icon(Icons.close,
+                            color: Colors.white, size: 28),
+                      ),
+                      const Spacer(),
+                      GestureDetector(
+                        onTap: () async {
+                          if (_cameraController == null ||
+                              !_cameraInitialized) return;
+                          final mode =
+                              _cameraController!.value.flashMode;
+                          await _cameraController!.setFlashMode(
+                            mode == FlashMode.off
+                                ? FlashMode.auto
+                                : FlashMode.off,
+                          );
+                          setState(() {});
+                        },
+                        child: Icon(
+                          _cameraController?.value.flashMode == FlashMode.off
+                              ? Icons.flash_off
+                              : Icons.flash_auto,
+                          color: Colors.white,
+                          size: 26,
+                        ),
+                      ),
+                      const SizedBox(width: 20),
+                      GestureDetector(
+                        onTap: _flipCamera,
+                        child: const Icon(Icons.flip_camera_ios,
+                            color: Colors.white, size: 26),
+                      ),
+                    ],
                   ),
-                  const Spacer(),
-                  GestureDetector(
-                    onTap: () async {
-                      if (_cameraController == null ||
-                          !_cameraInitialized) return;
-                      final mode =
-                          _cameraController!.value.flashMode;
-                      await _cameraController!.setFlashMode(
-                        mode == FlashMode.off
-                            ? FlashMode.auto
-                            : FlashMode.off,
-                      );
-                      setState(() {});
-                    },
-                    child: Icon(
-                      _cameraController?.value.flashMode == FlashMode.off
-                          ? Icons.flash_off
-                          : Icons.flash_auto,
-                      color: Colors.white,
-                      size: 26,
-                    ),
-                  ),
-                  const SizedBox(width: 20),
-                  GestureDetector(
-                    onTap: _flipCamera,
-                    child: const Icon(Icons.flip_camera_ios,
-                        color: Colors.white, size: 26),
-                  ),
+                  // Top-center "Add sound" chip — opens MusicPickerScreen.
+                  _buildAddSoundButton(),
                 ],
               ),
             ),
@@ -782,9 +870,22 @@ class _MediaPickerSheetState extends State<_MediaPickerSheet>
                         ),
                       ),
                       GestureDetector(
-                        onTap: _isRecording ? null : _takePhoto,
-                        onLongPressStart: (_) => _startVideoRecording(),
-                        onLongPressEnd: (_) => _stopVideoRecording(),
+                        // REEL mode = video-only (TikTok pattern). Tap shuru
+                        // karta hai, tap se hi stop hota hai — long-press
+                        // gesture chhupa rakha tha aur tap pe photo le leta
+                        // tha jo galat tha. Post/Story me purana behavior
+                        // bana hua hai: tap = photo, hold = video.
+                        onTap: _mode == ContentMode.reel
+                            ? (_isRecording
+                                ? _stopVideoRecording
+                                : _startVideoRecording)
+                            : (_isRecording ? null : _takePhoto),
+                        onLongPressStart: _mode == ContentMode.reel
+                            ? null
+                            : (_) => _startVideoRecording(),
+                        onLongPressEnd: _mode == ContentMode.reel
+                            ? null
+                            : (_) => _stopVideoRecording(),
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 200),
                           width: _isRecording ? 86 : 76,
@@ -839,8 +940,12 @@ class _MediaPickerSheetState extends State<_MediaPickerSheet>
                   const SizedBox(height: 8),
                   Text(
                     _isRecording
-                        ? context.tr('finger_up_to_save_video')
-                        : context.tr('tap_photo_hold_video'),
+                        ? (_mode == ContentMode.reel
+                            ? 'Tap to stop recording'
+                            : context.tr('finger_up_to_save_video'))
+                        : (_mode == ContentMode.reel
+                            ? 'Tap to start reel recording'
+                            : context.tr('tap_photo_hold_video')),
                     style:
                     const TextStyle(color: Colors.white54, fontSize: 12),
                   ),
@@ -878,6 +983,84 @@ class _MediaPickerSheetState extends State<_MediaPickerSheet>
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  // Pill chip shown at top-center of the media picker sheet. Tap opens the
+  // MusicPickerScreen; once a song is picked the chip shows the title with
+  // an "x" to clear.
+  Widget _buildAddSoundButton() {
+    final song = _selectedSong;
+    final hasSong = song != null;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: _openMusicPicker,
+        borderRadius: BorderRadius.circular(24),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          decoration: BoxDecoration(
+            color: hasSong
+                ? const Color(0xFF0095F6).withOpacity(0.25)
+                : Colors.black.withOpacity(0.45),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: hasSong ? const Color(0xFF0095F6) : Colors.white70,
+              width: 1.2,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.music_note, color: Colors.white, size: 16),
+              const SizedBox(width: 6),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 160),
+                child: Text(
+                  hasSong ? song.title : 'Add sound',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              if (hasSong) ...[
+                const SizedBox(width: 6),
+                GestureDetector(
+                  onTap: () {
+                    setState(() => _selectedSong = null);
+                    // Parent ko bhi inform karo — warna discard ke baad
+                    // sheet dobara isi cleared song ke saath kholega.
+                    widget.onSongChanged?.call(null);
+                  },
+                  child: const Icon(Icons.close,
+                      color: Colors.white70, size: 16),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openMusicPicker() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MusicPickerScreen(
+          onSongSelected: (song) {
+            if (!mounted) return;
+            setState(() => _selectedSong = song);
+            // Persist across sheet re-opens (after discard from editor).
+            widget.onSongChanged?.call(song);
+          },
         ),
       ),
     );
@@ -926,9 +1109,15 @@ class _MediaEditorScreen extends StatefulWidget {
   final XFile file;
   final bool isVideo;
   final ContentMode mode;
+  // Optional background music picked in the camera sheet. Carried through so
+  // the post-details upload step can mux it into the final video.
+  final SongModel? song;
 
   const _MediaEditorScreen(
-      {required this.file, required this.isVideo, required this.mode});
+      {required this.file,
+      required this.isVideo,
+      required this.mode,
+      this.song});
 
   @override
   State<_MediaEditorScreen> createState() => _MediaEditorScreenState();
@@ -1054,6 +1243,7 @@ class _MediaEditorScreenState extends State<_MediaEditorScreen> {
           isVideo: widget.isVideo,
           mode: widget.mode,
           filterIndex: _selectedFilter,
+          song: widget.song,
         ),
       ),
     );
@@ -1225,17 +1415,72 @@ class _MediaEditorScreenState extends State<_MediaEditorScreen> {
     }
   }
 
+  // Ask the user whether to discard the in-progress media (filter selection,
+  // loaded video/image) before leaving the editor. Returns true if the user
+  // chose Discard, false otherwise.
+  Future<bool> _confirmDiscard() async {
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Text(
+          'Discard changes?',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+        content: const Text(
+          'If you go back now, your selected media and filter will be lost.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text(
+              'Continue editing',
+              style: TextStyle(color: Color(0xFF0095F6)),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Discard',
+              style: TextStyle(color: Colors.redAccent),
+            ),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
   @override
   Widget build(BuildContext context) {
     final filter = _filters[_selectedFilter];
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        final shouldDiscard = await _confirmDiscard();
+        if (shouldDiscard && mounted) {
+          _videoController?.pause();
+          Navigator.of(context).pop();
+        }
+      },
+      child: Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () async {
+            final shouldDiscard = await _confirmDiscard();
+            if (shouldDiscard && mounted) {
+              _videoController?.pause();
+              Navigator.of(context).pop();
+            }
+          },
         ),
+        centerTitle: true,
         title: Text(
           widget.mode == ContentMode.story
               ? context.tr('new_story')
@@ -1320,6 +1565,7 @@ class _MediaEditorScreenState extends State<_MediaEditorScreen> {
           ),
         ],
       ),
+      ),
     );
   }
 }
@@ -1332,6 +1578,11 @@ class _PostDetailsScreen extends StatefulWidget {
   final bool isVideo;
   final ContentMode mode;
   final int filterIndex;
+  // TikTok-style: agar user ne MusicPickerScreen se song chuna tha to use
+  // yahan tak carry karke laaye hain. Photo posts ke liye sirf Firestore
+  // metadata banta hai (feed/reel player chalata hai), aur video posts ke
+  // liye ffmpeg se actual audio video mein mix bhi karte hain.
+  final SongModel? song;
 
   const _PostDetailsScreen({
     required this.file,
@@ -1340,6 +1591,7 @@ class _PostDetailsScreen extends StatefulWidget {
     required this.isVideo,
     required this.mode,
     required this.filterIndex,
+    this.song,
   });
 
   @override
@@ -1354,6 +1606,9 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
   bool _hideLikeCount = false;
   bool _hideShareCount = false;
   bool _turnOffCommenting = false;
+  // ✅ Author opt-in: dosre log app ke andar se is post ko Gallery me save
+  //    kar sakte hain ya nahi. Default off — saving requires explicit consent.
+  bool _allowDownload = false;
   List<TaggedUser> _taggedUsers = [];
   bool _isUploading = false;
   Map<String, dynamic>? _linkedReel;
@@ -1361,6 +1616,12 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
   PollData? _poll;
 
   bool _alsoShareEnabled = false; // ← YE ADD KARO
+
+  // Audio mix mode jab video + song dono hon. `true` = song original mic
+  // audio ke saath mix hoga (reels jaisa); `false` = song mic audio ko
+  // replace kar dega (classic TikTok lipsync). Sirf video posts par effect
+  // karta hai — photo posts mein hum sirf metadata save karte hain.
+  bool _mixWithOriginalAudio = false;
   bool _isValidUrl(String url) {
     if (url.isEmpty) return false;
     final cleaned = url.trim().replaceAll('"', '');
@@ -3049,6 +3310,29 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
                             .update({'turnOffCommenting': v});
                       }
                     }),
+                // ✅ Author opt-in download — share sheet's Download button
+                //    reads this field in real time before saving to gallery.
+                //    Off by default. Toggling on an already-uploaded post
+                //    flips the Firestore field live (same pattern as the
+                //    three toggles above).
+                _moreOptionTile(
+                    ctx: ctx,
+                    setModalState: setModalState,
+                    icon: Icons.download_outlined,
+                    title: 'Allow downloads',
+                    subtitle:
+                        'Aap ki post dosre log Gallery me save kar sakenge.',
+                    value: _allowDownload,
+                    onChanged: (v) async {
+                      setModalState(() => _allowDownload = v);
+                      setState(() => _allowDownload = v);
+                      if (_currentPostId != null) {
+                        await FirebaseFirestore.instance
+                            .collection('posts')
+                            .doc(_currentPostId)
+                            .update({'allowDownloads': v});
+                      }
+                    }),
                 const SizedBox(height: 16),
               ],
             ),
@@ -3136,7 +3420,34 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
       // Upload primary media once. We may reuse the same URL when the user
       // also opted into the cross-share (story <-> post/reel).
       String imageUrl = '';
-      if (widget.imageBytes != null) {
+      final song = widget.song;
+
+      if (widget.isVideo) {
+        // VIDEO branch — agar song chuna gaya hai, pehle ffmpeg se merge karo
+        // (mic audio replace ya mix), warna seedha original video upload.
+        File videoFile = File(widget.file.path);
+        if (song != null && song.previewUrl.isNotEmpty) {
+          try {
+            final merged = await _mergeSongIntoVideo(
+              videoPath: widget.file.path,
+              songUrl: song.previewUrl,
+              keepOriginalAudio: _mixWithOriginalAudio,
+              songStartMs: song.startMs,
+              songEndMs: song.endMs,
+            );
+            if (merged != null) videoFile = merged;
+          } catch (e) {
+            debugPrint('FFmpeg merge failed, uploading raw video: $e');
+          }
+        }
+        final uploadedUrl = isStory
+            ? await CloudinaryService.uploadStory(videoFile, true)
+            : await CloudinaryService.uploadPost(videoFile, true);
+        if (uploadedUrl == null) {
+          throw Exception('Cloudinary upload failed');
+        }
+        imageUrl = uploadedUrl;
+      } else if (widget.imageBytes != null) {
         final tempDir = await getTemporaryDirectory();
         final tempFile = File(
             '${tempDir.path}/post_${DateTime.now().millisecondsSinceEpoch}.jpg');
@@ -3152,6 +3463,13 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
           await tempFile.delete();
         } catch (_) {}
       }
+
+      // ✅ Derive the poster URL once so notifications, shared-chat cards, and
+      //    the universal share sheet all read a real JPEG instead of choking on
+      //    the raw `.mp4` URL. For images this just IS the imageUrl.
+      final String thumbnailUrl = widget.isVideo
+          ? (CloudinaryService.videoThumbnailUrl(imageUrl) ?? imageUrl)
+          : imageUrl;
 
       // ✅ STICKER: Build caption with stickers
       final stickerEmojis =
@@ -3186,6 +3504,13 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
             'username': username,
             'avatarUrl': photoUrl,
             'imageUrl': imageUrl,
+            // ✅ Video stories ke liye proper `videoUrl` field bhi save karo
+            //    (read side cleanly fetch kar sake, backward-compat ke liye
+            //    imageUrl me bhi same URL rehta hai).
+            if (widget.isVideo) 'videoUrl': imageUrl,
+            // ✅ Notification / share-card poster — Cloudinary `so_0` JPG for
+            //    video stories, imageUrl for photo stories.
+            'thumbnailUrl': thumbnailUrl,
             'isVideo': widget.isVideo,
             'caption': captionText,
             'createdAt': FieldValue.serverTimestamp(),
@@ -3212,6 +3537,8 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
             'stickerEmojis': stickerEmojis,
             if (_poll != null) 'poll': _poll!.toMap(),
             'hasPoll': _poll != null,
+            if (song != null) ...song.toFirestoreMap(),
+            'hasSong': song != null,
           };
 
       Map<String, dynamic> _buildPostDoc() => {
@@ -3224,6 +3551,17 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
             ].where((s) => s.isNotEmpty).join('\n'),
             'caption': captionText,
             'imageUrl': imageUrl,
+            // ✅ Video posts ke liye `videoUrl` field bhi save karo. Pehle
+            //    sirf `imageUrl` me Cloudinary mp4 URL daala ja raha tha,
+            //    isliye read side (`Post.fromFirestore`) videoUrl=null
+            //    milta tha aur VideoPlayer initialize hi nahi hota tha.
+            if (widget.isVideo) 'videoUrl': imageUrl,
+            // ✅ Stand-alone poster URL — for notifications + chat shared-card
+            //    + share sheet thumbnail download. Video posts: Cloudinary
+            //    `so_0` JPG. Image posts: same as imageUrl. Old posts without
+            //    this field still render correctly via Post.thumbnailUrl getter
+            //    (on-the-fly Cloudinary transform fallback).
+            'thumbnailUrl': thumbnailUrl,
             'timestamp': FieldValue.serverTimestamp(),
             'likesCount': 0,
             'commentsCount': 0,
@@ -3237,6 +3575,9 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
             'hideLikeCount': _hideLikeCount,
             'hideShareCount': _hideShareCount,
             'turnOffCommenting': _turnOffCommenting,
+            // ✅ Author opt-in — read in real time by the share sheet's
+            //    Download button. Default false (toggle in "More options").
+            'allowDownloads': _allowDownload,
             'taggedUsers': _taggedUsers
                 .map((u) => {
                       'uid': u.uid,
@@ -3257,6 +3598,8 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
             'hasStickers': _selectedStickers.isNotEmpty,
             'stickerEmojis': stickerEmojis,
             if (_linkedReel != null) 'linkedReel': _linkedReel,
+            if (song != null) ...song.toFirestoreMap(),
+            'hasSong': song != null,
           };
 
       // ── STORY branch ─────────────────────────────────────────
@@ -3319,6 +3662,175 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
             content: Text('Error: $e'),
             backgroundColor: Colors.red));
     }
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // FFmpeg helper — TikTok-style background music ko recorded/picked
+  // video mein mux karta hai. Song preview MP3 download, ffmpeg call,
+  // output mp4 path return.
+  //
+  // keepOriginalAudio = false → mic audio totally replace (lipsync mode)
+  // keepOriginalAudio = true  → amix filter se dono blend (reels mode)
+  //
+  // Output file path return karta hai, ya null agar merge fail ho jaye
+  // (caller raw video upload kar dega).
+  // ────────────────────────────────────────────────────────────────
+  Future<File?> _mergeSongIntoVideo({
+    required String videoPath,
+    required String songUrl,
+    required bool keepOriginalAudio,
+    int songStartMs = 0,
+    int? songEndMs,
+  }) async {
+    final tempDir = await getTemporaryDirectory();
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final songPath = '${tempDir.path}/song_$ts.mp3';
+    final outPath = '${tempDir.path}/post_with_song_$ts.mp4';
+
+    // 1) Song preview download karo.
+    try {
+      final res = await http.get(Uri.parse(songUrl));
+      if (res.statusCode != 200 || res.bodyBytes.isEmpty) {
+        debugPrint('Song download failed: ${res.statusCode}');
+        return null;
+      }
+      await File(songPath).writeAsBytes(res.bodyBytes);
+    } catch (e) {
+      debugPrint('Song download error: $e');
+      return null;
+    }
+
+    // Trim window → -ss / -t (seconds). User ke trimmer choices ko honor karo;
+    // -ss song input ke pehle lagao taake fast seek ho.
+    final startSec = (songStartMs / 1000).toStringAsFixed(3);
+    final String? trimDurSec = songEndMs == null
+        ? null
+        : (((songEndMs - songStartMs).clamp(1, 1 << 30)) / 1000)
+            .toStringAsFixed(3);
+    final trimArgs = '-ss $startSec'
+        '${trimDurSec != null ? ' -t $trimDurSec' : ''}';
+
+    // 2) FFmpeg command banao. -shortest taake output video ki length jitna
+    // hi ho (chahay song chhota ho ya bara). `aac` audio codec Cloudinary +
+    // mobile players ke saath sabse compatible hai.
+    final String cmd;
+    if (keepOriginalAudio) {
+      // Original mic audio ke saath song mix
+      cmd = '-y -i "$videoPath" $trimArgs -i "$songPath" '
+          '-filter_complex "[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=2[aout]" '
+          '-map 0:v -map "[aout]" -c:v copy -c:a aac -shortest "$outPath"';
+    } else {
+      // Mic audio replace — sirf song chalega (classic lipsync)
+      cmd = '-y -i "$videoPath" $trimArgs -i "$songPath" '
+          '-map 0:v -map 1:a -c:v copy -c:a aac -shortest "$outPath"';
+    }
+
+    try {
+      final session = await FFmpegKit.execute(cmd);
+      final rc = await session.getReturnCode();
+      if (ReturnCode.isSuccess(rc)) {
+        final out = File(outPath);
+        if (await out.exists()) return out;
+      } else {
+        final logs = await session.getAllLogsAsString();
+        debugPrint('FFmpeg failed (rc=$rc):\n$logs');
+      }
+    } catch (e) {
+      debugPrint('FFmpeg exec error: $e');
+    }
+    try {
+      await File(songPath).delete();
+    } catch (_) {}
+    return null;
+  }
+
+  // Song info card + (video posts ke liye) audio mix toggle.
+  // Sirf tab dikhta hai jab user ne MusicPickerScreen se gana chuna ho.
+  Widget _buildSongCard() {
+    final song = widget.song!;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF7F7F7),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFE6E6E6)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: song.albumArt.isNotEmpty
+                      ? Image.network(song.albumArt,
+                          width: 44, height: 44, fit: BoxFit.cover)
+                      : Container(
+                          width: 44,
+                          height: 44,
+                          color: Colors.grey[300],
+                          child: const Icon(Icons.music_note,
+                              color: Colors.grey)),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(song.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w600, fontSize: 14)),
+                      const SizedBox(height: 2),
+                      Text(song.artist,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              color: Colors.grey, fontSize: 12)),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.music_note, color: Color(0xFF0095F6)),
+              ],
+            ),
+            if (widget.isVideo) ...[
+              const SizedBox(height: 10),
+              const Divider(height: 1),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: const [
+                        Text('Mix with original audio',
+                            style: TextStyle(
+                                fontSize: 14, fontWeight: FontWeight.w500)),
+                        SizedBox(height: 2),
+                        Text(
+                          'Off = lipsync (sirf gana). On = gana + apki awaz.',
+                          style:
+                              TextStyle(color: Colors.grey, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Switch(
+                    value: _mixWithOriginalAudio,
+                    activeColor: const Color(0xFF0095F6),
+                    onChanged: (v) =>
+                        setState(() => _mixWithOriginalAudio = v),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 
   // Post-share / save-draft ke baad seedha "My Profile" par bhejo.
@@ -3897,6 +4409,8 @@ class _PostDetailsScreenState extends State<_PostDetailsScreen> {
                   style: const TextStyle(color: Colors.grey, fontSize: 14),
                 ),
                 onTap: _openTagPeopleSheet),
+            // Song summary + (video only) audio mix mode toggle.
+            if (widget.song != null) _buildSongCard(),
             if (widget.mode != ContentMode.story) ...[
               _settingRow(
                   icon: Icons.location_on_outlined,

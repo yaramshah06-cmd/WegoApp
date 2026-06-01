@@ -54,14 +54,37 @@ class UserProvider extends ChangeNotifier {
   UserModel _user = UserModel();
   bool _isLoading = false;
 
+  // Session cache — re-mounting screens skip the refetch.
+  String? _loadedUid;
+  Future<void>? _inFlightLoad;
+
   UserModel get user => _user;
   bool get isLoading => _isLoading;
 
+  /// Refresh helper — call when you know the user doc has changed.
+  Future<void> refresh() => loadUserFromFirebase(force: true);
+
   // ✅ Firebase se real user data load karo
-  Future<void> loadUserFromFirebase() async {
+  Future<void> loadUserFromFirebase({bool force = false}) async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
 
+    // Already loaded for this user → skip the round-trip.
+    if (!force && _loadedUid == uid) return;
+
+    // Coalesce concurrent calls so we don't fire two reads in parallel.
+    if (!force && _inFlightLoad != null) return _inFlightLoad;
+
+    final completer = _doLoad(uid);
+    _inFlightLoad = completer;
+    try {
+      await completer;
+    } finally {
+      _inFlightLoad = null;
+    }
+  }
+
+  Future<void> _doLoad(String uid) async {
     _isLoading = true;
     notifyListeners();
 
@@ -84,6 +107,7 @@ class UserProvider extends ChangeNotifier {
           gender: data['gender'] ?? '',
           language: data['language'] ?? 'English',
         );
+        _loadedUid = uid;
       }
     } catch (e) {
       debugPrint('UserProvider load error: $e');
