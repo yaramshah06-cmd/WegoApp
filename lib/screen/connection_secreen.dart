@@ -61,7 +61,7 @@ class MatchesScreen extends StatefulWidget {
 class _MatchesScreenState extends State<MatchesScreen> {
   int _currentIndex = 0;
 
-  static const Color primaryPurple = Color(0xFF6C3FEB);
+  static const Color primaryPurple = Color(0xFF7A1730);
   static const Color tealGreen = Color(0xFF2DBD9B);
 
   @override
@@ -181,7 +181,7 @@ class _MatchesScreenState extends State<MatchesScreen> {
             ),
             _NavItem(
               icon: Icons.favorite_border,
-              label: 'favorite',
+              label: 'Match',
               selected: _currentIndex == 1,
               onTap: () => setState(() => _currentIndex = 1),
             ),

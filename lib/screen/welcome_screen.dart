@@ -3,7 +3,7 @@ import 'login_screen.dart';           // ✅ Login Screen import
 import 'create_account.dart';         // ✅ Sign Up Screen import
 
 // ─────────────────────────────────────────────────────────────
-// WELCOME SCREEN
+// WELCOME SCREEN  —  WeGo Dating
 // ─────────────────────────────────────────────────────────────
 class WelcomeScreen extends StatefulWidget {
   const WelcomeScreen({super.key});
@@ -42,146 +42,163 @@ class _WelcomeScreenState extends State<WelcomeScreen>
     super.dispose();
   }
 
-  // ── Brand colour ─────────────────────────────────────────────
-  static const Color kBlue     = Color(0xFF2B52F5);
-  static const Color kBlueSoft = Color(0xFFD6DFFE);
-  static const Color kBlueMid  = Color(0xFF4169F1);
+  // ── Brand colours (maroon dating palette) ────────────────────
+  static const Color kMaroon     = Color(0xFF7A1730); // deep maroon
+  static const Color kMaroonDark = Color(0xFF4A0E1E); // darker maroon
+  static const Color kRose       = Color(0xFFC2415E); // rose accent
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-
     return Scaffold(
-      backgroundColor: theme.scaffoldBackgroundColor,
-      body: SafeArea(
-        child: FadeTransition(
-          opacity: _fade,
-          child: SlideTransition(
-            position: _slide,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 32),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  // ── Top spacer ──────────────────────────────
-                  const Spacer(flex: 2),
+      // ── Full-screen maroon gradient background ────────────────
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [kRose, kMaroon, kMaroonDark],
+            stops: [0.0, 0.55, 1.0],
+          ),
+        ),
+        child: SafeArea(
+          child: FadeTransition(
+            opacity: _fade,
+            child: SlideTransition(
+              position: _slide,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // ── Top spacer ──────────────────────────────
+                    const Spacer(flex: 2),
 
-                  // ── Logo mark ───────────────────────────────
-                  SizedBox(
-                    width: 145,
-                    height: 145,
-                    child: CustomPaint(painter: _LogoPainter(isDark: isDark)),
-                  ),
-
-                  const SizedBox(height: 18),
-
-                  // ── App name ─────────────────────────────────
-                  Text(
-                    'WeGo\nMarriage',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: isDark ? Colors.white : kBlue,
-                      fontSize: 36,
-                      fontWeight: FontWeight.w300,
-                      height: 1.20,
-                      letterSpacing: 0.3,
+                    // ── Heart logo mark ─────────────────────────
+                    SizedBox(
+                      width: 130,
+                      height: 130,
+                      child: CustomPaint(painter: _HeartLogoPainter()),
                     ),
-                  ),
 
-                  const SizedBox(height: 8),
+                    const SizedBox(height: 22),
 
-                  // ── Subtitle ─────────────────────────────────
-                  Text(
-                    'Dermatology Center',
-                    style: TextStyle(
-                      color: isDark ? Colors.white70 : kBlueMid,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.4,
-                    ),
-                  ),
-
-                  // ── Middle spacer ────────────────────────────
-                  const Spacer(flex: 2),
-
-                  // ── Description text ─────────────────────────
-                  Text(
-                    'Lorem ipsum dolor sit amet, consectetur adipiscing elit, '
-                        'sed do eiusmod tempor incididunt ut labore et dolore '
-                        'magna aliqua.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: isDark ? Colors.white60 : const Color(0xFF555555),
-                      fontSize: 13,
-                      height: 1.6,
-                    ),
-                  ),
-
-                  // ── Bottom spacer ────────────────────────────
-                  const Spacer(flex: 1),
-
-                  // ── Log In button ────────────────────────────
-                  SizedBox(
-                    width: double.infinity,
-                    height: 54,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.push(              // ✅ Login Navigator
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const LoginScreen(),
-                          ),
-                        );
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: kBlue,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shape: const StadiumBorder(),
-                        textStyle: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0.3,
-                        ),
+                    // ── App name ─────────────────────────────────
+                    const Text(
+                      'WeGo',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 46,
+                        fontWeight: FontWeight.w700,
+                        height: 1.10,
+                        letterSpacing: 1.0,
                       ),
-                      child: const Text('Log In'),
                     ),
-                  ),
 
-                  const SizedBox(height: 14),
+                    const SizedBox(height: 8),
 
-                  // ── Sign Up button ───────────────────────────
-                  SizedBox(
-                    width: double.infinity,
-                    height: 54,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.push(              // ✅ Sign Up Navigator
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const CreateAccountScreen(),
-                          ),
-                        );
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: isDark ? Colors.white10 : kBlueSoft,
-                        foregroundColor: isDark ? Colors.white : kBlue,
-                        elevation: 0,
-                        shape: const StadiumBorder(),
-                        side: isDark ? const BorderSide(color: Colors.white24) : null,
-                        textStyle: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0.3,
-                        ),
+                    // ── Tagline ─────────────────────────────────
+                    const Text(
+                      'Find your perfect match',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 0.6,
                       ),
-                      child: const Text('Sign Up'),
                     ),
-                  ),
 
-                  const SizedBox(height: 36),
-                ],
+                    // ── Middle spacer ────────────────────────────
+                    const Spacer(flex: 2),
+
+                    // ── Description text ─────────────────────────
+                    const Text(
+                      'Meet new people, make real connections, '
+                          'and find someone special — all in one place.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white60,
+                        fontSize: 13.5,
+                        height: 1.6,
+                      ),
+                    ),
+
+                    // ── Bottom spacer ────────────────────────────
+                    const Spacer(flex: 1),
+
+                    // ── Create Account button (primary) ──────────
+                    SizedBox(
+                      width: double.infinity,
+                      height: 56,
+                      child: ElevatedButton(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const CreateAccountScreen(),
+                            ),
+                          );
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: kMaroon,
+                          elevation: 0,
+                          shape: const StadiumBorder(),
+                          textStyle: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                        child: const Text('Create Account'),
+                      ),
+                    ),
+
+                    const SizedBox(height: 14),
+
+                    // ── Log In button (secondary / outlined) ─────
+                    SizedBox(
+                      width: double.infinity,
+                      height: 56,
+                      child: OutlinedButton(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const LoginScreen(),
+                            ),
+                          );
+                        },
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          side: const BorderSide(color: Colors.white70, width: 1.4),
+                          shape: const StadiumBorder(),
+                          textStyle: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                        child: const Text('I already have an account'),
+                      ),
+                    ),
+
+                    const SizedBox(height: 20),
+
+                    // ── Terms & Privacy ──────────────────────────
+                    const Text(
+                      'By continuing you agree to our Terms & Privacy Policy',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11,
+                        height: 1.4,
+                      ),
+                    ),
+
+                    const SizedBox(height: 24),
+                  ],
+                ),
               ),
             ),
           ),
@@ -192,115 +209,64 @@ class _WelcomeScreenState extends State<WelcomeScreen>
 }
 
 // ─────────────────────────────────────────────────────────────
-// LOGO CUSTOM PAINTER  (cross + leaf + wave)
+// HEART LOGO PAINTER  (rounded heart inside a soft circle)
 // ─────────────────────────────────────────────────────────────
-class _LogoPainter extends CustomPainter {
-  static const Color kBlue = Color(0xFF2B52F5);
-  final bool isDark;
-
-  _LogoPainter({this.isDark = false});
-
+class _HeartLogoPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final double w = size.width;
     final double h = size.height;
 
-    final blueFill = Paint()
-      ..color = isDark ? Colors.white : kBlue
+    // ── Soft translucent circle behind the heart ──────────────
+    final circlePaint = Paint()
+      ..color = Colors.white.withOpacity(0.14)
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(Offset(w / 2, h / 2), w * 0.5, circlePaint);
+
+    final ringPaint = Paint()
+      ..color = Colors.white.withOpacity(0.30)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0;
+    canvas.drawCircle(Offset(w / 2, h / 2), w * 0.5 - 1, ringPaint);
+
+    // ── Heart shape ───────────────────────────────────────────
+    final heartPaint = Paint()
+      ..color = Colors.white
       ..style = PaintingStyle.fill;
 
-    // ── 1. CROSS ─────────────────────────────────────────────
-    const double armT = 0.27;
-    const double r    = armT / 2;
-    const double cTop = 0.00;
-    const double cBot = 0.70;
-    const double cL   = 0.08;
-    const double cR   = 0.92;
-    const double vL   = 0.50 - armT / 2;
-    const double vR   = 0.50 + armT / 2;
-    const double hTop = cTop + (cBot - cTop) * 0.22;
-    const double hBot = hTop + armT;
+    final Path heart = Path();
+    final double cx = w / 2;
+    final double top = h * 0.34;
+    final double bottom = h * 0.72;
+    final double half = w * 0.24;
 
-    // Vertical bar
-    canvas.drawRRect(
-      RRect.fromLTRBR(
-        w * vL, h * cTop, w * vR, h * cBot,
-        Radius.circular(w * r),
-      ),
-      blueFill,
+    heart.moveTo(cx, bottom);
+    // left side up to the left bump
+    heart.cubicTo(
+      cx - half * 1.4, h * 0.58,
+      cx - half * 1.5, top,
+      cx - half * 0.5, top,
     );
-
-    // Horizontal bar
-    canvas.drawRRect(
-      RRect.fromLTRBR(
-        w * cL, h * hTop, w * cR, h * hBot,
-        Radius.circular(w * r),
-      ),
-      blueFill,
+    // left bump to centre dip
+    heart.cubicTo(
+      cx - half * 0.1, top,
+      cx, h * 0.40,
+      cx, h * 0.44,
     );
-
-    // ── 2. LEAF ───────────────────────────────────────────────
-    final double lTipX = w * 0.54;
-    final double lTipY = h * 0.50;
-    final double lBotX = w * 0.47;
-    final double lBotY = h * 0.82;
-
-    final Path leaf = Path();
-    leaf.moveTo(lTipX, lTipY);
-    leaf.cubicTo(
-      lTipX + w * 0.24, lTipY + h * 0.10,
-      lTipX + w * 0.20, lBotY - h * 0.05,
-      lBotX,            lBotY,
+    // centre dip to right bump
+    heart.cubicTo(
+      cx, h * 0.40,
+      cx + half * 0.1, top,
+      cx + half * 0.5, top,
     );
-    leaf.cubicTo(
-      lBotX - w * 0.16, lBotY - h * 0.05,
-      lTipX - w * 0.20, lTipY + h * 0.12,
-      lTipX,            lTipY,
+    // right bump down to bottom tip
+    heart.cubicTo(
+      cx + half * 1.5, top,
+      cx + half * 1.4, h * 0.58,
+      cx, bottom,
     );
-    leaf.close();
-    canvas.drawPath(leaf, blueFill);
-
-    // Leaf spine (white cutout vein)
-    final spinePaint = Paint()
-      ..color       = isDark ? Colors.black : Colors.white
-      ..style       = PaintingStyle.stroke
-      ..strokeWidth = 1.8
-      ..strokeCap   = StrokeCap.round;
-
-    final Path spine = Path();
-    spine.moveTo(lTipX, lTipY + h * 0.03);
-    spine.quadraticBezierTo(
-      lTipX - w * 0.05, (lTipY + lBotY) / 2,
-      lBotX + w * 0.02, lBotY - h * 0.015,
-    );
-    canvas.drawPath(spine, spinePaint);
-
-    // ── 3. WAVE ───────────────────────────────────────────────
-    final wavePaint = Paint()
-      ..color       = isDark ? Colors.white : kBlue
-      ..style       = PaintingStyle.stroke
-      ..strokeWidth = 1.8
-      ..strokeCap   = StrokeCap.round;
-
-    final double wY  = h * 0.88;
-    final double wL  = w * 0.12;
-    final double wR  = w * 0.88;
-    final double wM  = (wL + wR) / 2;
-    final double amp = h * 0.028;
-
-    final Path wave = Path();
-    wave.moveTo(wL, wY);
-    wave.cubicTo(
-      wL + (wM - wL) * 0.35, wY - amp,
-      wL + (wM - wL) * 0.65, wY + amp,
-      wM, wY,
-    );
-    wave.cubicTo(
-      wM + (wR - wM) * 0.35, wY - amp,
-      wM + (wR - wM) * 0.65, wY + amp,
-      wR, wY,
-    );
-    canvas.drawPath(wave, wavePaint);
+    heart.close();
+    canvas.drawPath(heart, heartPaint);
   }
 
   @override

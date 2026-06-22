@@ -68,7 +68,7 @@ class _OtpScreenState extends State<OtpScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('OTP resent successfully'),
-          backgroundColor: Color(0xFF3333FF),
+          backgroundColor: Color(0xFF7A1730),
           duration: Duration(seconds: 2),
         ),
       );
@@ -139,7 +139,7 @@ class _OtpScreenState extends State<OtpScreen> {
                 style: TextStyle(
                   fontSize: 32,
                   fontWeight: FontWeight.w800,
-                  color: Color(0xFF3333FF),
+                  color: Color(0xFF7A1730),
                   letterSpacing: 0.3,
                 ),
               ),
@@ -176,7 +176,7 @@ class _OtpScreenState extends State<OtpScreen> {
                         ),
                         focusedBorder: const UnderlineInputBorder(
                           borderSide: BorderSide(
-                            color: Color(0xFF3333FF),
+                            color: Color(0xFF7A1730),
                             width: 2,
                           ),
                         ),
@@ -206,7 +206,7 @@ class _OtpScreenState extends State<OtpScreen> {
                       color: _isOTPComplete
                           ? Colors.red
                           : _canResend
-                              ? const Color(0xFF3333FF)
+                              ? const Color(0xFF7A1730)
                               : (isDarkMode ? Colors.white38 : Colors.grey),
                       letterSpacing: 1.2,
                       fontWeight: FontWeight.w500,
@@ -224,7 +224,7 @@ class _OtpScreenState extends State<OtpScreen> {
                 child: ElevatedButton(
                   onPressed: _handleContinue,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF3333FF),
+                    backgroundColor: const Color(0xFF7A1730),
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(32),
@@ -255,7 +255,7 @@ class _OtpScreenState extends State<OtpScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please enter complete OTP'),
-          backgroundColor: Color(0xFF3333FF),
+          backgroundColor: Color(0xFF7A1730),
         ),
       );
       return;
@@ -345,7 +345,7 @@ class _OtpScreenState extends State<OtpScreen> {
                 width: 40,
                 child: CircularProgressIndicator(
                   strokeWidth: 3,
-                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF3333FF)),
+                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF7A1730)),
                 ),
               ),
               const SizedBox(height: 16),

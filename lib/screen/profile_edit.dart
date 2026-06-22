@@ -367,7 +367,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                           user.avatarUrl,
                           fit: BoxFit.cover,
                           errorBuilder: (_, _, _) => Container(
-                            color: const Color(0xFF7B4EDB),
+                            color: const Color(0xFF7A1730),
                             child: const Icon(Icons.person, color: Colors.white, size: 60),
                           ),
                         )
@@ -375,7 +375,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                           File(user.avatarUrl),
                           fit: BoxFit.cover,
                           errorBuilder: (_, _, _) => Container(
-                            color: const Color(0xFF7B4EDB),
+                            color: const Color(0xFF7A1730),
                             child: const Icon(Icons.person, color: Colors.white, size: 60),
                           ),
                         ),

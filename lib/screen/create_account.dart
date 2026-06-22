@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class CreateAccountScreen extends StatefulWidget {
@@ -17,8 +18,8 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
 
   bool _obscurePassword = true;
 
-  static const Color primaryBlue = Color(0xFF3D5AFE);
-  static const Color lightBlue = Color(0xFF4D6FFF);
+  static const Color primaryBlue = Color(0xFF7A1730);
+  static const Color lightBlue = Color(0xFFC2415E);
 
   @override
   void dispose() {
@@ -281,6 +282,13 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                   ),
                   const SizedBox(width: 20),
                   _buildSocialButton(
+                    icon: Icons.chat_bubble_rounded,
+                    iconSize: 24,
+                    onTap: _handleWeChatSignUp,
+                    isDark: isDark,
+                  ),
+                  const SizedBox(width: 20),
+                  _buildSocialButton(
                     icon: Icons.fingerprint,
                     iconSize: 24,
                     onTap: () {},
@@ -321,6 +329,16 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
     );
   }
 
+  // WeChat Sign-Up
+  void _handleWeChatSignUp() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('WeChat Sign-Up will be available soon'),
+        backgroundColor: Colors.orange,
+      ),
+    );
+  }
+
   Widget _buildLabel(String text, bool isDark) {
     return Text(
       text,
@@ -344,7 +362,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: isDark ? Colors.grey[900] : const Color(0xFFEEF0FF),
+        color: isDark ? Colors.grey[900] : const Color(0xFFFBEAEE),
         borderRadius: BorderRadius.circular(14),
       ),
       child: TextField(
@@ -386,14 +404,14 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           border: Border.all(
-            color: isDark ? Colors.white24 : const Color(0xFFCDD0FF),
+            color: isDark ? Colors.white24 : const Color(0xFFFBEAEE),
             width: 1.5,
           ),
-          color: isDark ? Colors.grey[900] : const Color(0xFFEEF0FF),
+          color: isDark ? Colors.grey[900] : const Color(0xFFFBEAEE),
         ),
         child: Icon(
           icon,
-          color: isDark ? Colors.white : const Color(0xFF5C6BC0),
+          color: isDark ? Colors.white : const Color(0xFF7A1730),
           size: iconSize,
         ),
       ),
@@ -519,26 +537,60 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
       return;
     }
 
-    // Save credentials to SharedPreferences
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('saved_email', email.toLowerCase());
-    await prefs.setString('saved_password', password);
-    await prefs.setString('user_name', name);
+    try {
+      // 1. Show loading
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(child: CircularProgressIndicator()),
+      );
 
-    if (!context.mounted) return;
+      // 2. Real Firebase Sign-Up
+      final UserCredential userCredential = await FirebaseAuth.instance
+          .createUserWithEmailAndPassword(email: email, password: password);
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Account created successfully!'),
-        backgroundColor: Colors.green,
-      ),
-    );
+      // 3. Update Profile (Name)
+      await userCredential.user?.updateDisplayName(name);
 
-    // Navigate to login screen
-    if (context.mounted) {
+      // 4. Save extra info to SharedPreferences (optional, but good for offline)
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('user_name', name);
+      await prefs.setString('user_email', email);
+
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Account created successfully in Firebase!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+
+      // Navigate to login or home
       Navigator.pop(context);
-    }
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
 
-    debugPrint('Sign Up: $name | $email | $mobile | $dob');
+      String message = 'An error occurred';
+      if (e.code == 'weak-password') {
+        message = 'The password provided is too weak.';
+      } else if (e.code == 'email-already-in-use') {
+        message = 'The account already exists for that email.';
+      } else {
+        message = e.message ?? message;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message), backgroundColor: Colors.red),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString()), backgroundColor: Colors.red),
+      );
+    }
   }
 }

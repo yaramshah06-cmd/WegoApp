@@ -4,7 +4,11 @@
       "Bash(flutter analyze:*)",
       "Bash(ls:*)",
       "Bash(flutter build:*)",
-      "Bash(flutter pub:*)"
+      "Bash(flutter pub:*)",
+      "Bash(flutter clean *)",
+      "Bash(flutter run *)",
+      "Bash(flutter --version)",
+      "Bash(awk '-F - ' '{print $NF}')"
     ]
   }
 }

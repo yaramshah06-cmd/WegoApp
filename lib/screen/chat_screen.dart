@@ -3,13 +3,13 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:wego_marriage/providers/chat_provider.dart';
 import 'package:wego_marriage/services/local_storage_service.dart';
-import 'package:image_gallery_saver/image_gallery_saver.dart';
+import 'package:image_gallery_saver_plus/image_gallery_saver_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:http/http.dart' as http;
 import 'dart:async';
 
 // ── Colors ────────────────────────────────────────────────────
-const Color kPurple = Color(0xFF6B4EFF);
+const Color kPurple = Color(0xFF7A1730);
 const Color kTeal = Color(0xFF2EC4B6);
 
 // ── Message Status ─────────────────────────────────────────────
@@ -879,7 +879,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       }
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(isVideo ? 'Saving video...' : 'Saving image...')));
       final response = await http.get(Uri.parse(url));
-      final result = await ImageGallerySaver.saveImage(response.bodyBytes, quality: 100, name: 'wego_${DateTime.now().millisecondsSinceEpoch}');
+      final result = await ImageGallerySaverPlus.saveImage(response.bodyBytes, quality: 100, name: 'wego_${DateTime.now().millisecondsSinceEpoch}');
       if (mounted) {
         final bool success = result['isSuccess'] ?? false;
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(

@@ -8,7 +8,7 @@ class InterestsScreen extends StatefulWidget {
 }
 
 class _InterestsScreenState extends State<InterestsScreen> {
-  static const Color primaryBlue = Color(0xFF4A6CF7);
+  static const Color primaryBlue = Color(0xFF7A1730);
 
   final Set<String> _selectedInterests = {'Shopping', 'Run', 'Traveling'};
 

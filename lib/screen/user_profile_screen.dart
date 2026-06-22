@@ -86,7 +86,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final primaryColor = const Color(0xFF4A6CF7);
+    final primaryColor = const Color(0xFF7A1730);
     final accentPink = const Color(0xFFDD2A7B);
     final textColor = isDark ? Colors.white : Colors.black87;
     final subTextColor = isDark ? Colors.white70 : Colors.black54;

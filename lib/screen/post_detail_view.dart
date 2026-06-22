@@ -49,7 +49,7 @@ class _PostDetailViewState extends State<PostDetailView> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final primaryColor = const Color(0xFF4A6CF7);
+    final primaryColor = const Color(0xFF7A1730);
 
     return Scaffold(
       backgroundColor: isDark ? Colors.black : Colors.white,

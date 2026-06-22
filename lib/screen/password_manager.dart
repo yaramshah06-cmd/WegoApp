@@ -111,7 +111,7 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: isError ? Colors.redAccent : const Color(0xFF4169E1),
+        backgroundColor: isError ? Colors.redAccent : const Color(0xFF7A1730),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
@@ -131,7 +131,7 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
         leading: IconButton(
           icon: const Icon(
             Icons.arrow_back_ios,
-            color: Color(0xFF4169E1),
+            color: Color(0xFF7A1730),
             size: 20,
           ),
           onPressed: () => Navigator.pop(context),
@@ -140,7 +140,7 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
         title: const Text(
           'Password Manager',
           style: TextStyle(
-            color: Color(0xFF4169E1),
+            color: Color(0xFF7A1730),
             fontSize: 18,
             fontWeight: FontWeight.w600,
           ),
@@ -176,7 +176,7 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
                 child: const Text(
                   'Forgot Password?',
                   style: TextStyle(
-                    color: Color(0xFF4169E1),
+                    color: Color(0xFF7A1730),
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
                   ),
@@ -232,7 +232,7 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
               child: ElevatedButton(
                 onPressed: _onChangePassword,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF4169E1),
+                  backgroundColor: const Color(0xFF7A1730),
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(30),
@@ -265,7 +265,7 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: isDarkMode ? Colors.white.withValues(alpha: 0.1) : const Color(0xFFF0F3FF),
+        color: isDarkMode ? Colors.white.withValues(alpha: 0.1) : const Color(0xFFFBEAEE),
         borderRadius: BorderRadius.circular(12),
       ),
       child: TextField(
@@ -283,7 +283,7 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
           suffixIcon: IconButton(
             icon: Icon(
               obscure ? Icons.visibility_off_outlined : Icons.visibility_outlined,
-              color: const Color(0xFF8896C8),
+              color: const Color(0xFF7A1730),
               size: 22,
             ),
             onPressed: onToggle,

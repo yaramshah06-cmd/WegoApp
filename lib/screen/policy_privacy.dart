@@ -8,7 +8,7 @@ class PrivacyPolicyScreen extends StatelessWidget {
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
     final textColor = isDarkMode ? Colors.white : const Color(0xFF374151);
     final subTextColor = isDarkMode ? Colors.white70 : const Color(0xFF6B7280);
-    final primaryColor = const Color(0xFF2563EB);
+    final primaryColor = const Color(0xFF7A1730);
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,

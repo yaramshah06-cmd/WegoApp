@@ -15,7 +15,7 @@ class _NbrScreenState extends State<NbrScreen> {
   String _selectedCountryFlag = 'IN';
   String? _phoneError;
 
-  static const Color primaryBlue = Color(0xFF4A6CF7);
+  static const Color primaryBlue = Color(0xFF7A1730);
 
   // Country list with name, flag, and code
   final List<Map<String, String>> _countries = [

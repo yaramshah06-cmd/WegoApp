@@ -62,7 +62,7 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final Color textColor = isDark ? Colors.white : Colors.black87;
     final Color secondaryTextColor = isDark ? Colors.white70 : Colors.black54;
-    final Color primaryBlue = const Color(0xFF4A6CF7);
+    final Color primaryBlue = const Color(0xFF7A1730);
     final Color cardColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
 
     return Scaffold(

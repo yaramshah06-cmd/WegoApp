@@ -79,58 +79,132 @@ class _SplashScreenState extends State<SplashScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF2E5FF6),
-      body: Center(
-        child: FadeTransition(
-          opacity: _fadeAnimation,
-          child: ScaleTransition(
-            scale: _scaleAnimation,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                // ===== LOGO =====
-                SizedBox(
-                  width: 110,
-                  height: 110,
-                  child: CustomPaint(
-                    painter: WeGoLogoPainter(),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Color(0xFFC2415E), // rose
+              Color(0xFF7A1730), // maroon
+              Color(0xFF4A0E1E), // dark maroon
+            ],
+            stops: [0.0, 0.55, 1.0],
+          ),
+        ),
+        child: Center(
+          child: FadeTransition(
+            opacity: _fadeAnimation,
+            child: ScaleTransition(
+              scale: _scaleAnimation,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  // ===== HEART LOGO =====
+                  SizedBox(
+                    width: 120,
+                    height: 120,
+                    child: CustomPaint(
+                      painter: _SplashHeartPainter(),
+                    ),
                   ),
-                ),
 
-                const SizedBox(height: 24),
+                  const SizedBox(height: 26),
 
-                // ===== APP NAME =====
-                const Text(
-                  'WeGo\nMarriage',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 36,
-                    fontWeight: FontWeight.w300,
-                    height: 1.2,
-                    letterSpacing: 0.5,
+                  // ===== APP NAME =====
+                  const Text(
+                    'WeGo',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 46,
+                      fontWeight: FontWeight.w700,
+                      height: 1.1,
+                      letterSpacing: 1.0,
+                    ),
                   ),
-                ),
 
-                const SizedBox(height: 10),
+                  const SizedBox(height: 10),
 
-                // ===== TAGLINE =====
-                const Text(
-                  'Matrimonial App',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 2.0,
+                  // ===== TAGLINE =====
+                  const Text(
+                    'Find your perfect match',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 1.5,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
       ),
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// SPLASH HEART LOGO PAINTER
+// ─────────────────────────────────────────────────────────────
+class _SplashHeartPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double w = size.width;
+    final double h = size.height;
+
+    // Soft translucent circle
+    final circlePaint = Paint()
+      ..color = Colors.white.withOpacity(0.14)
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(Offset(w / 2, h / 2), w * 0.5, circlePaint);
+
+    final ringPaint = Paint()
+      ..color = Colors.white.withOpacity(0.30)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0;
+    canvas.drawCircle(Offset(w / 2, h / 2), w * 0.5 - 1, ringPaint);
+
+    // Heart shape
+    final heartPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.fill;
+
+    final Path heart = Path();
+    final double cx = w / 2;
+    final double top = h * 0.34;
+    final double bottom = h * 0.72;
+    final double half = w * 0.24;
+
+    heart.moveTo(cx, bottom);
+    heart.cubicTo(
+      cx - half * 1.4, h * 0.58,
+      cx - half * 1.5, top,
+      cx - half * 0.5, top,
+    );
+    heart.cubicTo(
+      cx - half * 0.1, top,
+      cx, h * 0.40,
+      cx, h * 0.44,
+    );
+    heart.cubicTo(
+      cx, h * 0.40,
+      cx + half * 0.1, top,
+      cx + half * 0.5, top,
+    );
+    heart.cubicTo(
+      cx + half * 1.5, top,
+      cx + half * 1.4, h * 0.58,
+      cx, bottom,
+    );
+    heart.close();
+    canvas.drawPath(heart, heartPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class WeGoLogoPainter extends CustomPainter {
@@ -166,7 +240,7 @@ class WeGoLogoPainter extends CustomPainter {
 
     // ----- LEAF -----
     final leafPaint = Paint()
-      ..color = const Color(0xFF2E5FF6)
+      ..color = const Color(0xFF7A1730)
       ..style = PaintingStyle.fill;
 
     final Path leafPath = Path();

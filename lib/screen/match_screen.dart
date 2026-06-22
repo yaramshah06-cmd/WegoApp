@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:math' as math;
 
 // ── Colors ────────────────────────────────────────────────────
-const Color kPrimaryBlue = Color(0xFF4A6CF7);
+const Color kPrimaryBlue = Color(0xFF7A1730);
 
 // ── Match Screen ──────────────────────────────────────────────
 class MatchPopupScreen extends StatefulWidget {

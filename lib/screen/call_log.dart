@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-const Color kPurple = Color(0xFF6B4EFF);
+const Color kPurple = Color(0xFF7A1730);
 const Color kTeal = Color(0xFF2EC4B6);
 
 /// WhatsApp-style call log bubble.

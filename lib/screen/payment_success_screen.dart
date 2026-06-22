@@ -10,7 +10,7 @@ class PaymentSuccessScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
     final textColor = isDarkMode ? Colors.white : Colors.black87;
-    final primaryColor = const Color(0xFF3A5DE0);
+    final primaryColor = const Color(0xFF7A1730);
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,

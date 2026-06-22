@@ -35,7 +35,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         return Theme(
           data: Theme.of(context).copyWith(
             colorScheme: const ColorScheme.light(
-              primary: Color(0xFF4A6CF7),
+              primary: Color(0xFF7A1730),
               onPrimary: Colors.white,
               onSurface: Colors.black,
             ),
@@ -81,7 +81,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Profile updated successfully!'),
-        backgroundColor: Color(0xFF4A6CF7),
+        backgroundColor: Color(0xFF7A1730),
       ),
     );
   }
@@ -97,13 +97,13 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         elevation: 0,
         leading: IconButton(
-          icon: Icon(Icons.arrow_back_ios, color: isDark ? Colors.white : const Color(0xFF4A6CF7)),
+          icon: Icon(Icons.arrow_back_ios, color: isDark ? Colors.white : const Color(0xFF7A1730)),
           onPressed: () => Navigator.of(context).pop(),
         ),
         title: Text(
           'Profile',
           style: TextStyle(
-            color: isDark ? Colors.white : const Color(0xFF4A6CF7),
+            color: isDark ? Colors.white : const Color(0xFF7A1730),
             fontWeight: FontWeight.bold,
             fontSize: 20,
           ),
@@ -127,7 +127,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       border: Border.all(
-                          color: const Color(0xFF4A6CF7), width: 2),
+                          color: const Color(0xFF7A1730), width: 2),
                     ),
                     child: const CircleAvatar(
                       radius: 45,
@@ -142,7 +142,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                     child: Container(
                       padding: const EdgeInsets.all(5),
                       decoration: const BoxDecoration(
-                        color: Color(0xFF4A6CF7),
+                        color: Color(0xFF7A1730),
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(Icons.edit,
@@ -204,12 +204,12 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                   controller: _dobController,
                   hint: 'DD / MM / YYY',
                   keyboardType: TextInputType.datetime,
-                  hintColor: const Color(0xFF4A6CF7),
+                  hintColor: const Color(0xFF7A1730),
                   textColor: textColor,
                   isDark: isDark,
                   suffixIcon: const Icon(
                     Icons.calendar_today_outlined,
-                    color: Color(0xFF4A6CF7),
+                    color: Color(0xFF7A1730),
                     size: 18,
                   ),
                 ),
@@ -225,7 +225,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
               child: ElevatedButton(
                 onPressed: _updateProfile,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF4A6CF7),
+                  backgroundColor: const Color(0xFF7A1730),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(32),
                   ),
@@ -281,7 +281,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         hintStyle: TextStyle(color: isDark ? Colors.white60 : hintColor, fontSize: 14),
         suffixIcon: suffixIcon,
         filled: true,
-        fillColor: isDark ? Colors.white.withValues(alpha: 0.1) : const Color(0xFFF0F2FF),
+        fillColor: isDark ? Colors.white.withValues(alpha: 0.1) : const Color(0xFFFBEAEE),
         contentPadding:
         const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
         border: OutlineInputBorder(
@@ -295,7 +295,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
           borderSide:
-          const BorderSide(color: Color(0xFF4A6CF7), width: 1.5),
+          const BorderSide(color: Color(0xFF7A1730), width: 1.5),
         ),
       ),
     );

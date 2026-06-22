@@ -11,7 +11,7 @@ class PaymentScreen extends StatelessWidget {
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
     final textColor = isDarkMode ? Colors.white : Colors.black87;
     final subTextColor = isDarkMode ? Colors.white70 : Colors.black54;
-    final dividerColor = isDarkMode ? Colors.white24 : const Color(0xFFE0E4F0);
+    final dividerColor = isDarkMode ? Colors.white24 : const Color(0xFFFBEAEE);
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
@@ -97,7 +97,7 @@ class PaymentScreen extends StatelessWidget {
                       labelStyle: const TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
-                        color: Color(0xFF3A5DE0),
+                        color: Color(0xFF7A1730),
                       ),
                       valueStyle: TextStyle(
                         fontSize: 15,
@@ -122,7 +122,7 @@ class PaymentScreen extends StatelessWidget {
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w500,
-                            color: Color(0xFF3A5DE0),
+                            color: Color(0xFF7A1730),
                           ),
                         ),
                         Row(
@@ -143,7 +143,7 @@ class PaymentScreen extends StatelessWidget {
                                 style: TextStyle(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w600,
-                                  color: Color(0xFF3A5DE0),
+                                  color: Color(0xFF7A1730),
                                 ),
                               ),
                             ),
@@ -170,7 +170,7 @@ class PaymentScreen extends StatelessWidget {
                   // TODO: Pay now logic
                 },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF3A5DE0),
+                  backgroundColor: const Color(0xFF7A1730),
                   foregroundColor: Colors.white,
                   elevation: 0,
                   shape: RoundedRectangleBorder(
@@ -201,7 +201,7 @@ class _BlueHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      color: const Color(0xFF3A5DE0),
+      color: const Color(0xFF7A1730),
       child: SafeArea(
         bottom: false,
         child: Padding(
@@ -277,14 +277,14 @@ class _DoctorCard extends StatelessWidget {
           child: Container(
             width: 70,
             height: 70,
-            color: isDarkMode ? Colors.white10 : const Color(0xFFD0D8F0),
+            color: isDarkMode ? Colors.white10 : const Color(0xFFFBEAEE),
             child: Image.network(
               'https://i.pravatar.cc/200?img=47',
               fit: BoxFit.cover,
               errorBuilder: (context, error, stackTrace) => const Icon(
                 Icons.person,
                 size: 40,
-                color: Color(0xFF3A5DE0),
+                color: Color(0xFF7A1730),
               ),
             ),
           ),
@@ -306,7 +306,7 @@ class _DoctorCard extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w700,
-                        color: Color(0xFF3A5DE0),
+                        color: Color(0xFF7A1730),
                       ),
                     ),
                   ),
@@ -314,12 +314,12 @@ class _DoctorCard extends StatelessWidget {
                     width: 28,
                     height: 28,
                     decoration: BoxDecoration(
-                      color: isDarkMode ? Colors.white12 : const Color(0xFFE8ECFF),
+                      color: isDarkMode ? Colors.white12 : const Color(0xFFFBEAEE),
                       shape: BoxShape.circle,
                     ),
                     child: const Icon(
                       Icons.verified_outlined,
-                      color: Color(0xFF3A5DE0),
+                      color: Color(0xFF7A1730),
                       size: 16,
                     ),
                   ),
@@ -345,7 +345,7 @@ class _DoctorCard extends StatelessWidget {
                 children: [
                   _StatChip(
                     icon: Icons.star,
-                    iconColor: const Color(0xFF3A5DE0),
+                    iconColor: const Color(0xFF7A1730),
                     label: '5',
                     isDarkMode: isDarkMode,
                     textColor: textColor,
@@ -353,7 +353,7 @@ class _DoctorCard extends StatelessWidget {
                   const SizedBox(width: 8),
                   _StatChip(
                     icon: Icons.chat_bubble_outline,
-                    iconColor: const Color(0xFF3A5DE0),
+                    iconColor: const Color(0xFF7A1730),
                     label: '60',
                     isDarkMode: isDarkMode,
                     textColor: textColor,
@@ -391,7 +391,7 @@ class _StatChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: isDarkMode ? Colors.white12 : const Color(0xFFF0F3FF),
+        color: isDarkMode ? Colors.white12 : const Color(0xFFFBEAEE),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Row(
@@ -440,7 +440,7 @@ class _InfoRow extends StatelessWidget {
               const TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w500,
-                color: Color(0xFF3A5DE0),
+                color: Color(0xFF7A1730),
               ),
         ),
         Text(

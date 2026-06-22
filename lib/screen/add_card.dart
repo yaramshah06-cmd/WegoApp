@@ -52,7 +52,7 @@ class _AddCardScreenState extends State<AddCardScreen> {
                           style: TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.w700,
-                            color: isDark ? Colors.white : const Color(0xFF2B4DE0),
+                            color: isDark ? Colors.white : const Color(0xFF7A1730),
                           ),
                         ),
                         Align(
@@ -61,7 +61,7 @@ class _AddCardScreenState extends State<AddCardScreen> {
                             onTap: () => Navigator.pop(context),
                             child: Icon(
                               Icons.chevron_left_rounded,
-                              color: isDark ? Colors.white : const Color(0xFF3A5DE0),
+                              color: isDark ? Colors.white : const Color(0xFF7A1730),
                               size: 30,
                             ),
                           ),
@@ -175,7 +175,7 @@ class _AddCardScreenState extends State<AddCardScreen> {
                     // TODO: Save card logic
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF3A5DE0),
+                    backgroundColor: const Color(0xFF7A1730),
                     foregroundColor: Colors.white,
                     elevation: 0,
                     shape: RoundedRectangleBorder(
@@ -227,8 +227,8 @@ class _CreditCardWidget extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         gradient: const LinearGradient(
           colors: [
-            Color(0xFF4B6EF5),
-            Color(0xFF2B4DE0),
+            Color(0xFFC2415E),
+            Color(0xFF7A1730),
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -463,7 +463,7 @@ class _InputField extends StatelessWidget {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       decoration: BoxDecoration(
-        color: isDark ? Colors.grey[900] : const Color(0xFFF0F3FF),
+        color: isDark ? Colors.grey[900] : const Color(0xFFFBEAEE),
         borderRadius: BorderRadius.circular(14),
       ),
       child: TextField(
@@ -474,14 +474,14 @@ class _InputField extends StatelessWidget {
         onChanged: onChanged,
         style: TextStyle(
           fontSize: 15,
-          color: isDark ? Colors.white : const Color(0xFF3A5DE0),
+          color: isDark ? Colors.white : const Color(0xFF7A1730),
           fontWeight: FontWeight.w500,
         ),
         decoration: InputDecoration(
           hintText: hint,
           hintStyle: TextStyle(
             fontSize: 15,
-            color: isDark ? Colors.white38 : const Color(0xFFADB8E8),
+            color: isDark ? Colors.white38 : const Color(0xFFFBEAEE),
             fontWeight: FontWeight.w400,
           ),
           border: InputBorder.none,

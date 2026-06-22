@@ -21,14 +21,14 @@ class SettingsScreen extends StatelessWidget {
           onTap: () => Navigator.pop(context),
           child: Icon(
             Icons.arrow_back_ios,
-            color: isDark ? Colors.white : const Color(0xFF4A6CF7),
+            color: isDark ? Colors.white : const Color(0xFF7A1730),
             size: 20,
           ),
         ),
         title: Text(
           'Settings',
           style: TextStyle(
-            color: isDark ? Colors.white : const Color(0xFF4A6CF7),
+            color: isDark ? Colors.white : const Color(0xFF7A1730),
             fontWeight: FontWeight.bold,
             fontSize: 20,
           ),
@@ -112,7 +112,7 @@ class SettingsScreen extends StatelessWidget {
             onPressed: () => Navigator.pop(context),
             child: const Text(
               'Cancel',
-              style: TextStyle(color: Color(0xFF4A6CF7)),
+              style: TextStyle(color: Color(0xFF7A1730)),
             ),
           ),
           ElevatedButton(
@@ -154,14 +154,14 @@ class ThemeScreen extends StatelessWidget {
           onTap: () => Navigator.pop(context),
           child: Icon(
             Icons.arrow_back_ios,
-            color: isDark ? Colors.white : const Color(0xFF4A6CF7),
+            color: isDark ? Colors.white : const Color(0xFF7A1730),
             size: 20,
           ),
         ),
         title: Text(
           'Theme Setting',
           style: TextStyle(
-            color: isDark ? Colors.white : const Color(0xFF4A6CF7),
+            color: isDark ? Colors.white : const Color(0xFF7A1730),
             fontWeight: FontWeight.bold,
             fontSize: 20,
           ),
@@ -181,7 +181,7 @@ class ThemeScreen extends StatelessWidget {
                         ? Icons.dark_mode
                         : Icons.light_mode,
                     size: 100,
-                    color: const Color(0xFF4A6CF7),
+                    color: const Color(0xFF7A1730),
                   ),
                   const SizedBox(height: 20),
                   Text(
@@ -198,8 +198,8 @@ class ThemeScreen extends StatelessWidget {
                     onChanged: (value) {
                       settingsProvider.toggleTheme(value);
                     },
-                    activeThumbColor: const Color(0xFF4A6CF7),
-                    activeTrackColor: const Color(0xFF4A6CF7).withValues(alpha: 0.5),
+                    activeThumbColor: const Color(0xFF7A1730),
+                    activeTrackColor: const Color(0xFF7A1730).withValues(alpha: 0.5),
                   ),
                 ],
               ),
@@ -242,7 +242,7 @@ class SettingsMenuItem extends StatelessWidget {
               // Icon
               Icon(
                 icon,
-                color: const Color(0xFF4A6CF7),
+                color: const Color(0xFF7A1730),
                 size: 24,
               ),
               const SizedBox(width: 20),
@@ -262,7 +262,7 @@ class SettingsMenuItem extends StatelessWidget {
               // Arrow
               const Icon(
                 Icons.arrow_forward_ios,
-                color: Color(0xFF4A6CF7),
+                color: Color(0xFF7A1730),
                 size: 16,
               ),
             ],

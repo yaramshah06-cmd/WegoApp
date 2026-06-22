@@ -5,7 +5,7 @@ import 'package:wego_marriage/screen/user_profile_screen.dart';
 import 'package:wego_marriage/screen/chat_screen.dart';
 
 // ── Colors ────────────────────────────────────────────────────
-const Color kPrimaryBlue = Color(0xFF4A6CF7);
+const Color kPrimaryBlue = Color(0xFF7A1730);
 const Color kTeal = Color(0xFF2EC4B6);
 const Color kOnline = Color(0xFF44D362);
 const Color kUnreadRed = Color(0xFFFF3B30);

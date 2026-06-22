@@ -19,7 +19,7 @@ class _SetPasswordScreenState extends State<SetPasswordScreen> {
   String? _passwordError;
   String? _confirmPasswordError;
 
-  static const Color primaryBlue = Color(0xFF3D5AFE);
+  static const Color primaryBlue = Color(0xFF7A1730);
 
   @override
   void initState() {
@@ -127,7 +127,7 @@ class _SetPasswordScreenState extends State<SetPasswordScreen> {
                 width: 40,
                 child: CircularProgressIndicator(
                   strokeWidth: 3,
-                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF3D5AFE)),
+                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF7A1730)),
                 ),
               ),
               const SizedBox(height: 16),
@@ -302,7 +302,7 @@ class _SetPasswordScreenState extends State<SetPasswordScreen> {
       children: [
         Container(
           decoration: BoxDecoration(
-            color: isDark ? Colors.white.withValues(alpha: 0.1) : const Color(0xFFEEF0FF),
+            color: isDark ? Colors.white.withValues(alpha: 0.1) : const Color(0xFFFBEAEE),
             borderRadius: BorderRadius.circular(14),
             border: errorText != null
                 ? Border.all(color: Colors.red, width: 1.5)

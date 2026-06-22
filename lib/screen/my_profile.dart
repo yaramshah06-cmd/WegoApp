@@ -104,7 +104,7 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
       builder: (context) => PopScope(
         canPop: false,
         child: AlertDialog(
-          backgroundColor: const Color(0xFF5B2BE8),
+          backgroundColor: const Color(0xFF7A1730),
           title: const Text(
             '🔒 Gallery Permission',
             style: TextStyle(color: Colors.white),
@@ -146,7 +146,7 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF5B2BE8),
+        backgroundColor: const Color(0xFF7A1730),
         title: const Text(
           'Open Settings',
           style: TextStyle(color: Colors.white),
@@ -398,7 +398,7 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF5B2BE8),
+        backgroundColor: const Color(0xFF7A1730),
         title: const Text(
           'Logout',
           style: TextStyle(color: Colors.white),
@@ -429,7 +429,7 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
     final user = context.watch<UserProvider>().user;
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final primaryColor = const Color(0xFF4A6CF7);
+    final primaryColor = const Color(0xFF7A1730);
     final textColor = isDark ? Colors.white : Colors.black87;
     final subTextColor = isDark ? Colors.white70 : Colors.black54;
 
@@ -792,7 +792,7 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
   void _showPostDetail(BuildContext context, String imageUrl, int postNumber) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final primaryColor = const Color(0xFF4A6CF7);
+    final primaryColor = const Color(0xFF7A1730);
     final textColor = isDark ? Colors.white : Colors.black87;
     final subTextColor = isDark ? Colors.white70 : Colors.black54;
 

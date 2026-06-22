@@ -26,7 +26,7 @@ class _NotificationSettingScreenState
         leading: IconButton(
           icon: const Icon(
             Icons.arrow_back_ios,
-            color: Color(0xFF4169E1),
+            color: Color(0xFF7A1730),
             size: 20,
           ),
           onPressed: () => Navigator.pop(context),
@@ -35,7 +35,7 @@ class _NotificationSettingScreenState
         title: const Text(
           'Notification Setting',
           style: TextStyle(
-            color: Color(0xFF4169E1),
+            color: Color(0xFF7A1730),
             fontSize: 18,
             fontWeight: FontWeight.w600,
           ),
@@ -124,9 +124,9 @@ class _NotificationSettingScreenState
               value: value,
               onChanged: onChanged,
               activeThumbColor: Colors.white,
-              activeTrackColor: const Color(0xFF4169E1),
+              activeTrackColor: const Color(0xFF7A1730),
               inactiveThumbColor: Colors.white,
-              inactiveTrackColor: const Color(0xFFDDE3F0),
+              inactiveTrackColor: const Color(0xFFFBEAEE),
               trackOutlineColor:
               WidgetStateProperty.all(Colors.transparent),
             ),

@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import '../providers/settings_provider.dart';
 
 // ── Colors ────────────────────────────────────────────────────
-const Color kPurple = Color(0xFF6B4EFF);
+const Color kPurple = Color(0xFF7A1730);
 const Color kRed = Color(0xFFE8405A);
 
 // ── Calling Screen ────────────────────────────────────────────

@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 // ── Colors ───────────────────────────────────────────────────
-const Color kPurple = Color(0xFF6B4EFF);
-const Color kPurpleLight = Color(0xFF7B61FF);
+const Color kPurple = Color(0xFF7A1730);
+const Color kPurpleLight = Color(0xFFC2415E);
 const Color kTeal = Color(0xFF2EC4B6);
-const Color kCardBg = Color(0xFFEDE9FF);
+const Color kCardBg = Color(0xFFFBEAEE);
 
 // ── Profile Model ─────────────────────────────────────────────
 class ProfileData {
@@ -427,7 +427,7 @@ class _BottomNav extends StatelessWidget {
             ),
             _NavItem(
               icon: Icons.favorite_border,
-              label: 'favorite',
+              label: 'Match',
               selected: currentIndex == 1,
               onTap: () => onTap(1),
             ),

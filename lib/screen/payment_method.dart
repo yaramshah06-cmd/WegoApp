@@ -38,7 +38,7 @@ class _PaymentMethodScreenState extends State<PaymentMethodScreen> {
                     style: TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.w700,
-                      color: Color(0xFF2B4DE0),
+                      color: Color(0xFF7A1730),
                     ),
                   ),
                   Align(
@@ -47,7 +47,7 @@ class _PaymentMethodScreenState extends State<PaymentMethodScreen> {
                       onTap: () => Navigator.pop(context),
                       child: const Icon(
                         Icons.chevron_left_rounded,
-                        color: Color(0xFF3A5DE0),
+                        color: Color(0xFF7A1730),
                         size: 30,
                       ),
                     ),
@@ -80,12 +80,12 @@ class _PaymentMethodScreenState extends State<PaymentMethodScreen> {
                       width: 36,
                       height: 36,
                       decoration: BoxDecoration(
-                        color: isDarkMode ? Colors.white12 : const Color(0xFFE8ECFF),
+                        color: isDarkMode ? Colors.white12 : const Color(0xFFFBEAEE),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: const Icon(
                         Icons.credit_card_outlined,
-                        color: Color(0xFF3A5DE0),
+                        color: Color(0xFF7A1730),
                         size: 20,
                       ),
                     ),
@@ -95,7 +95,7 @@ class _PaymentMethodScreenState extends State<PaymentMethodScreen> {
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w500,
-                        color: Color(0xFF3A5DE0),
+                        color: Color(0xFF7A1730),
                       ),
                     ),
                   ],
@@ -130,7 +130,7 @@ class _PaymentMethodScreenState extends State<PaymentMethodScreen> {
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w500,
-                        color: Color(0xFF3A5DE0),
+                        color: Color(0xFF7A1730),
                       ),
                     ),
                   ],
@@ -153,7 +153,7 @@ class _PaymentMethodScreenState extends State<PaymentMethodScreen> {
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w500,
-                        color: Color(0xFF3A5DE0),
+                        color: Color(0xFF7A1730),
                       ),
                     ),
                   ],
@@ -176,7 +176,7 @@ class _PaymentMethodScreenState extends State<PaymentMethodScreen> {
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w500,
-                        color: Color(0xFF3A5DE0),
+                        color: Color(0xFF7A1730),
                       ),
                     ),
                   ],
@@ -213,7 +213,7 @@ class _PaymentTile extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          color: isDarkMode ? Colors.white.withValues(alpha: 0.1) : const Color(0xFFF0F3FF),
+          color: isDarkMode ? Colors.white.withValues(alpha: 0.1) : const Color(0xFFFBEAEE),
           borderRadius: BorderRadius.circular(14),
         ),
         child: Row(
@@ -226,10 +226,10 @@ class _PaymentTile extends StatelessWidget {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: const Color(0xFF3A5DE0),
+                  color: const Color(0xFF7A1730),
                   width: selected ? 0 : 1.8,
                 ),
-                color: selected ? const Color(0xFF3A5DE0) : Colors.transparent,
+                color: selected ? const Color(0xFF7A1730) : Colors.transparent,
               ),
               child: selected
                   ? Center(
@@ -266,13 +266,13 @@ class _ApplePayIcon extends StatelessWidget {
       width: 36,
       height: 36,
       decoration: BoxDecoration(
-        color: isDarkMode ? Colors.white12 : const Color(0xFFE8ECFF),
+        color: isDarkMode ? Colors.white12 : const Color(0xFFFBEAEE),
         borderRadius: BorderRadius.circular(8),
       ),
       child: const Center(
         child: Icon(
           Icons.apple,
-          color: Color(0xFF3A5DE0),
+          color: Color(0xFF7A1730),
           size: 22,
         ),
       ),
@@ -291,7 +291,7 @@ class _PaypalIcon extends StatelessWidget {
       width: 36,
       height: 36,
       decoration: BoxDecoration(
-        color: isDarkMode ? Colors.white12 : const Color(0xFFE8ECFF),
+        color: isDarkMode ? Colors.white12 : const Color(0xFFFBEAEE),
         borderRadius: BorderRadius.circular(8),
       ),
       child: const Center(
@@ -300,7 +300,7 @@ class _PaypalIcon extends StatelessWidget {
           style: TextStyle(
             fontSize: 18,
             fontWeight: FontWeight.w900,
-            color: Color(0xFF3A5DE0),
+            color: Color(0xFF7A1730),
             fontStyle: FontStyle.italic,
           ),
         ),
@@ -320,7 +320,7 @@ class _GooglePayIcon extends StatelessWidget {
       width: 36,
       height: 36,
       decoration: BoxDecoration(
-        color: isDarkMode ? Colors.white12 : const Color(0xFFE8ECFF),
+        color: isDarkMode ? Colors.white12 : const Color(0xFFFBEAEE),
         borderRadius: BorderRadius.circular(8),
       ),
       child: const Center(
@@ -329,7 +329,7 @@ class _GooglePayIcon extends StatelessWidget {
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w900,
-            color: Color(0xFF3A5DE0),
+            color: Color(0xFF7A1730),
           ),
         ),
       ),

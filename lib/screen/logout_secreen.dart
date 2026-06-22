@@ -8,7 +8,7 @@ class LogoutScreen extends StatefulWidget {
 }
 
 class _LogoutScreenState extends State<LogoutScreen> {
-  static const Color primaryBlue = Color(0xFF4A6CF7);
+  static const Color primaryBlue = Color(0xFF7A1730);
   static const Color accentPink = Color(0xFFDD2A7B);
 
   void _showLogoutDialog(BuildContext context) {
@@ -132,7 +132,7 @@ class _LogoutScreenState extends State<LogoutScreen> {
     final Color subTextColor = isDark ? Colors.white60 : Colors.black45;
 
     return Scaffold(
-      backgroundColor: isDark ? const Color(0xFF121212) : const Color(0xFFF8F9FE),
+      backgroundColor: isDark ? const Color(0xFF121212) : const Color(0xFFFBEAEE),
       body: SafeArea(
         child: Column(
           children: [

@@ -74,7 +74,7 @@ class _FollowListScreenState extends State<FollowListScreen> {
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        backgroundColor: isDark ? Colors.black : const Color(0xFF5B2BE8),
+        backgroundColor: isDark ? Colors.black : const Color(0xFF7A1730),
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
@@ -139,7 +139,7 @@ class _FollowListScreenState extends State<FollowListScreen> {
   }
 
   Widget _buildUserTile(Map<String, dynamic> user, bool isDark, Color textColor, Color secondaryTextColor) {
-    final primaryColor = const Color(0xFF5B2BE8);
+    final primaryColor = const Color(0xFF7A1730);
     return GestureDetector(
       onTap: () => _navigateToProfile(user['name'], user['avatar']),
       child: Container(
@@ -157,7 +157,7 @@ class _FollowListScreenState extends State<FollowListScreen> {
               height: 50,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                border: Border.all(color: isDark ? Colors.white24 : const Color(0xFF5B2BE8), width: 2),
+                border: Border.all(color: isDark ? Colors.white24 : const Color(0xFF7A1730), width: 2),
               ),
               child: ClipOval(
                 child: Image.network(
@@ -166,7 +166,7 @@ class _FollowListScreenState extends State<FollowListScreen> {
                   loadingBuilder: (_, child, progress) {
                     if (progress == null) return child;
                     return Container(
-                      color: const Color(0xFF7B4EDB),
+                      color: const Color(0xFF7A1730),
                       child: const Center(
                         child: CircularProgressIndicator(
                           color: Colors.white,
@@ -176,7 +176,7 @@ class _FollowListScreenState extends State<FollowListScreen> {
                     );
                   },
                   errorBuilder: (_, _, _) => Container(
-                    color: const Color(0xFF7B4EDB),
+                    color: const Color(0xFF7A1730),
                     child: const Icon(Icons.person, color: Colors.white),
                   ),
                 ),

@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:wego_marriage/screen/home_feed_screen.dart';
 import 'package:wego_marriage/screen/nbr_screen.dart';
+import 'package:wego_marriage/screen/create_account.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -21,8 +22,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
   final LocalAuthentication _localAuth = LocalAuthentication();
 
-  static const Color primaryBlue = Color(0xFF3D5AFE);
-  static const Color lightBlue = Color(0xFF4D6FFF);
+  static const Color primaryBlue = Color(0xFF7A1730);
+  static const Color lightBlue = Color(0xFFC2415E);
 
   @override
   void initState() {
@@ -234,6 +235,13 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(width: 20),
                   _buildSocialButton(
                     context: context,
+                    icon: Icons.chat_bubble_rounded,
+                    iconSize: 24,
+                    onTap: _handleWeChatSignIn,
+                  ),
+                  const SizedBox(width: 20),
+                  _buildSocialButton(
+                    context: context,
                     icon: Icons.fingerprint,
                     iconSize: 24,
                     onTap: _handleBiometricAuth,
@@ -245,7 +253,14 @@ class _LoginScreenState extends State<LoginScreen> {
 
               Center(
                 child: TextButton(
-                  onPressed: () {},
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const CreateAccountScreen(),
+                      ),
+                    );
+                  },
                   child: const Text(
                     'Sign Up',
                     style: TextStyle(
@@ -346,7 +361,7 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
         child: Icon(
           icon,
-          color: const Color(0xFF6B7FD4),
+          color: const Color(0xFF7A1730),
           size: iconSize,
         ),
       ),
@@ -432,219 +447,91 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    // Get saved credentials from SharedPreferences
-    final prefs = await SharedPreferences.getInstance();
-    final savedPassword = prefs.getString('saved_password');
-    final savedEmail = prefs.getString('saved_email');
-
     setState(() {
       _isLoading = true;
     });
 
-    // Simulate processing delay
-    await Future.delayed(const Duration(seconds: 2));
+    try {
+      // Real Firebase Login
+      await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    setState(() {
-      _isLoading = false;
-    });
-
-    // Check if email matches saved email
-    if (savedEmail != null && email.toLowerCase() != savedEmail.toLowerCase()) {
       setState(() {
-        _emailError = 'Email does not match registered account';
+        _isLoading = false;
       });
-      return;
-    }
 
-    // Check if password matches saved password
-    if (savedPassword != null && password != savedPassword) {
+      // ✅ Login successful — HomeFeedScreen per navigate karo
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const HomeFeedScreen(),
+        ),
+      );
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
       setState(() {
-        _passwordError = 'Password is incorrect. Please try again.';
+        _isLoading = false;
       });
-      return;
+
+      if (e.code == 'user-not-found') {
+        setState(() {
+          _emailError = 'No user found for that email.';
+        });
+      } else if (e.code == 'wrong-password') {
+        setState(() {
+          _passwordError = 'Wrong password provided for that user.';
+        });
+      } else if (e.code == 'invalid-credential') {
+        setState(() {
+          _emailError = 'Invalid email or password.';
+        });
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message ?? 'Authentication failed')),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString())),
+      );
     }
-
-    // If no account exists yet, create one (first time login)
-    if (savedEmail == null) {
-      await prefs.setString('saved_email', email.toLowerCase());
-      await prefs.setString('saved_password', password);
-    }
-
-    if (!context.mounted) return;
-
-    // ✅ Login successful — HomeFeedScreen per navigate karo
-    // pushReplacement: back button se login screen per wapas nahi ja sakta
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const HomeFeedScreen(),
-      ),
-    );
   }
 
   // Google Sign-In
   Future<void> _handleGoogleSignIn() async {
-    // Show account picker dialog
-    final List<Map<String, String>> accounts = [
-      {'name': 'User One', 'email': 'user1@gmail.com'},
-      {'name': 'User Two', 'email': 'user2@gmail.com'},
-      {'name': 'User Three', 'email': 'user3@gmail.com'},
-    ];
-
-    if (!mounted) return;
-
-    int? selectedIndex;
-    await showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          title: const Text(
-            'Choose an account',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-          ),
-          contentPadding: const EdgeInsets.only(top: 8, bottom: 4),
-          content: SizedBox(
-            width: double.maxFinite,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: accounts.asMap().entries.map((entry) {
-                final idx = entry.key;
-                final acc = entry.value;
-                final isSelected = selectedIndex == idx;
-                return ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: isSelected ? primaryBlue : Colors.grey[300],
-                    child: Text(
-                      acc['name']![0],
-                      style: TextStyle(
-                        color: isSelected ? Colors.white : Colors.black,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  title: Text(acc['name']!),
-                  subtitle: Text(acc['email']!, style: const TextStyle(fontSize: 12)),
-                  onTap: () => setState(() => selectedIndex = idx),
-                );
-              }).toList(),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: selectedIndex != null
-                  ? () => Navigator.pop(context)
-                  : null,
-              child: const Text('Continue'),
-            ),
-          ],
-        ),
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Google Sign-In will be available soon'),
+        backgroundColor: Colors.orange,
       ),
-    );
-
-    if (selectedIndex == null || !mounted) return;
-
-    final selectedAccount = accounts[selectedIndex!];
-
-    // Show confirmation
-    bool? confirmed = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        contentPadding: const EdgeInsets.all(20),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircleAvatar(
-              radius: 28,
-              backgroundColor: primaryBlue,
-              child: Text(selectedAccount['name']![0],
-                  style: const TextStyle(
-                      fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
-            ),
-            const SizedBox(height: 12),
-            Text(selectedAccount['name']!,
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 4),
-            Text(selectedAccount['email']!,
-                style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              height: 44,
-              child: ElevatedButton(
-                onPressed: () => Navigator.pop(context, true),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: primaryBlue,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-                ),
-                child: const Text('CONTINUE',
-                    style: TextStyle(
-                        fontSize: 14, fontWeight: FontWeight.w700, letterSpacing: 1)),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    if (confirmed != true || !mounted) return;
-
-    // Show 1 sec loading then go to home
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(
-        child: CircularProgressIndicator(
-            valueColor: AlwaysStoppedAnimation<Color>(primaryBlue), strokeWidth: 3),
-      ),
-    );
-
-    await Future.delayed(const Duration(seconds: 1));
-    if (!mounted) return;
-    Navigator.pop(context);
-
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (context) => const HomeFeedScreen()),
     );
   }
 
   // Facebook Sign-In
   Future<void> _handleFacebookSignIn() async {
-    // Show 1 sec loading then go to home
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(
-        child: CircularProgressIndicator(
-            valueColor: AlwaysStoppedAnimation<Color>(primaryBlue), strokeWidth: 3),
-      ),
-    );
-
-    await Future.delayed(const Duration(seconds: 1));
-    if (!mounted) return;
-    Navigator.pop(context);
-
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Signed in with Facebook'),
-        backgroundColor: Colors.green,
+        content: Text('Facebook Sign-In will be available soon'),
+        backgroundColor: Colors.orange,
       ),
     );
+  }
 
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (context) => const HomeFeedScreen()),
+  // WeChat Sign-In
+  Future<void> _handleWeChatSignIn() async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('WeChat Sign-In will be available soon'),
+        backgroundColor: Colors.orange,
+      ),
     );
   }
 
